@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import logging
+import os
 import re
 import time
 from typing import List
@@ -23,6 +24,10 @@ from app.exceptions import (
     ModelNotFoundError,
     OllamaTimeoutError,
     OllamaUnavailableError,
+    LLMAuthenticationError,
+    LLMUnavailableError,
+    LLMTimeoutError,
+    LLMProviderError,
 )
 
 logger = logging.getLogger("app.telegram.handlers")
@@ -42,37 +47,39 @@ def escape_html_text(text: str) -> str:
 def format_telegram_html(text: str) -> str:
     """Format agent output into Telegram-safe HTML.
     
-    Converts markdown bold/italics/code fences into HTML tags while escaping
-    raw HTML tags to avoid Telegram parsing errors.
+    Converts markdown bold/italics/code syntax into HTML tags while preserving
+    valid Telegram HTML tags (<b>, <i>, <code>, <pre>) and escaping unsafe HTML.
     """
     if not text:
         return ""
 
-    # Preserve markdown code blocks before escaping
-    code_blocks: List[str] = []
+    # Convert standard markdown syntax to HTML tags if markdown was used
+    text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"(?<!\w)\*(.*?)\*(?!\w)", r"<i>\1</i>", text)
+    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
 
-    def save_code_block(match: re.Match) -> str:
-        code_blocks.append(match.group(1))
-        return f"___CODE_BLOCK_{len(code_blocks) - 1}___"
+    # Allowed Telegram HTML tags
+    allowed_tags = ["b", "i", "code", "pre", "u", "s"]
+    tokens: Dict[str, str] = {}
+    token_counter = 0
 
-    # Extract code blocks ```...```
-    text = re.sub(r"```(?:[a-zA-Z]*\n)?(.*?)```", save_code_block, text, flags=re.DOTALL)
+    # Protect allowed opening and closing tags
+    for tag in allowed_tags:
+        def replace_tag(match: re.Match) -> str:
+            nonlocal token_counter
+            key = f"___TAG_TOKEN_{token_counter}___"
+            tokens[key] = match.group(0)
+            token_counter += 1
+            return key
 
-    # Escape all HTML characters
-    escaped = escape_html_text(text)
+        text = re.sub(rf"</?{tag}\b[^>]*>", replace_tag, text, flags=re.IGNORECASE)
 
-    # Convert markdown syntax to Telegram HTML tags
-    # Bold **text** -> <b>text</b>
-    escaped = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", escaped)
-    # Italic *text* or _text_ -> <i>text</i>
-    escaped = re.sub(r"(?<!\w)\*(.*?)\*(?!\w)", r"<i>\1</i>", escaped)
-    # Inline code `text` -> <code>text</code>
-    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    # Escape all remaining text (converting standalone < and > to &lt; and &gt;)
+    escaped = html.escape(text)
 
-    # Restore code blocks cleanly inside <pre> tags
-    for i, code_content in enumerate(code_blocks):
-        escaped_code = escape_html_text(code_content.strip())
-        escaped = escaped.replace(f"___CODE_BLOCK_{i}___", f"<pre>{escaped_code}</pre>")
+    # Restore protected Telegram HTML tags
+    for key, tag_str in tokens.items():
+        escaped = escaped.replace(html.escape(key), tag_str)
 
     return escaped
 
@@ -227,6 +234,27 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 for plain_chunk in plain_chunks:
                     await update.message.reply_text(plain_chunk)
 
+        # Deliver generated document attachments (.pdf, .pptx) if present in tool execution results
+        if agent_response.metadata and "tool_results" in agent_response.metadata:
+            for tr in agent_response.metadata["tool_results"]:
+                data = tr.get("data")
+                if isinstance(data, dict) and "file_path" in data:
+                    fpath = data["file_path"]
+                    if os.path.exists(fpath):
+                        fname = data.get("file_name", os.path.basename(fpath))
+                        caption = f"📄 <b>Generated Document:</b> <code>{escape_html_text(fname)}</code>"
+                        try:
+                            with open(fpath, "rb") as doc_file:
+                                await update.message.reply_document(
+                                    document=doc_file,
+                                    filename=fname,
+                                    caption=caption,
+                                    parse_mode=ParseMode.HTML,
+                                )
+                                logger.info(f"Successfully sent Telegram document attachment: {fname}")
+                        except Exception as doc_err:
+                            logger.error(f"Failed to send Telegram document attachment '{fpath}': {doc_err}")
+
     except Exception as exc:
         elapsed = time.time() - start_time
         logger.error(f"Error handling Telegram message after {elapsed:.2f}s: {exc}", exc_info=True)
@@ -242,12 +270,17 @@ async def send_error_response(update: Update, exc: Exception) -> None:
     if not update.message:
         return
 
-    if isinstance(exc, OllamaUnavailableError):
+    if isinstance(exc, LLMAuthenticationError):
+        msg = (
+            "<b>🔑 AI Authentication Error</b>\n\n"
+            "Invalid or missing API key for the configured LLM provider. Please check your system configuration."
+        )
+    elif isinstance(exc, (LLMUnavailableError, OllamaUnavailableError)):
         msg = (
             "<b>⚠️ AI Service Unavailable</b>\n\n"
-            "Could not connect to the local Ollama AI service. Please verify Ollama is running (`ollama serve`)."
+            "Could not connect to the configured AI provider service. Please check your network or service status."
         )
-    elif isinstance(exc, OllamaTimeoutError):
+    elif isinstance(exc, (LLMTimeoutError, OllamaTimeoutError)):
         msg = (
             "<b>⏳ AI Request Timed Out</b>\n\n"
             "The AI model took too long to generate a response. Please simplify your query or try again."
@@ -255,7 +288,7 @@ async def send_error_response(update: Update, exc: Exception) -> None:
     elif isinstance(exc, ModelNotFoundError):
         msg = (
             "<b>❌ Model Not Found</b>\n\n"
-            "The requested AI model is not installed in your local Ollama instance."
+            "The requested AI model was not found in the configured provider."
         )
     else:
         msg = (

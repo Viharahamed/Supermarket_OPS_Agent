@@ -9,7 +9,7 @@ def handle_message(message: str, user_id: Optional[int] = None) -> AgentResponse
     Returns an ``AgentResponse`` defined in ``app.agent.schemas``.
     """
     agent = Agent()
-    return agent.run(message)
+    return agent.run(message, user_id=user_id)
 
 
 def clear_session(user_id: int) -> bool:

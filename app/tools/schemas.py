@@ -316,3 +316,23 @@ class ListPreferencesInput(BaseModel):
 # Aliases for preference inputs to match different naming conventions
 GetUserPreferencesInput = GetPreferenceInput
 UpdateUserPreferencesInput = SetPreferenceInput
+
+
+# ---------------------------------------------------------------------------
+# Document Generation Tool input models
+# ---------------------------------------------------------------------------
+
+class GenerateInvoicePDFInput(BaseModel):
+    bill_id: Optional[int] = Field(None, description="Integer Bill ID (e.g. 1, 1001)")
+    bill_number: Optional[str] = Field(None, description="String Bill Number (e.g. BILL-20260906-XXXX)")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GenerateSalesAnalysisPPTXInput(BaseModel):
+    start_date: Optional[str] = Field(None, description="Start date YYYY-MM-DD")
+    end_date: Optional[str] = Field(None, description="End date YYYY-MM-DD")
+    days: Optional[int] = Field(7, description="Trailing number of days if start_date is omitted")
+
+    model_config = ConfigDict(extra="forbid")
+

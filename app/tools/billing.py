@@ -6,6 +6,8 @@ Each function accepts the validated Pydantic input model from
 Results are returned as plain dicts (the registry wraps them in ToolResult).
 """
 
+import uuid
+
 from app.services.billing_service import (
     create_draft_bill as svc_create_draft_bill,
     get_current_bill as svc_get_current_bill,
@@ -28,11 +30,12 @@ from app.tools.schemas import (
 
 
 def create_draft_bill(inp: CreateDraftBillInput) -> dict:
+    idem_key = inp.idempotency_key or f"draft_{uuid.uuid4().hex}"
     with get_db_context() as db:
         result = svc_create_draft_bill(
             db,
             customer_id=inp.customer_id,
-            idempotency_key=inp.idempotency_key,
+            idempotency_key=idem_key,
         )
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
@@ -68,12 +71,13 @@ def calculate_bill(inp: CalculateBillInput) -> dict:
 
 
 def finalize_bill(inp: FinalizeBillInput) -> dict:
+    idem_key = inp.idempotency_key or f"final_{inp.bill_id}_{uuid.uuid4().hex}"
     with get_db_context() as db:
         result = svc_finalize_bill(
             db,
             inp.bill_id,
             payment_method=inp.payment_method,
             payment_amount=inp.payment_amount,
-            idempotency_key=inp.idempotency_key,
+            idempotency_key=idem_key,
         )
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)

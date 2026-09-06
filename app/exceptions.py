@@ -128,6 +128,27 @@ class BillAlreadyFinalizedError(BillingError):
         self.bill_id = bill_id
 
 
+class BillNotFinalizedError(BillingError):
+    def __init__(self, bill_id: int, current_status: str = "DRAFT"):
+        super().__init__(
+            f"Cannot generate PDF invoice for bill '{bill_id}': Bill status is '{current_status}' (must be FINALIZED).",
+            code="BILL_NOT_FINALIZED",
+        )
+        self.bill_id = bill_id
+        self.current_status = current_status
+
+
+class DocumentGenerationError(KiranaException):
+    def __init__(self, message: str = "Document generation failed."):
+        super().__init__(message, code="DOCUMENT_GENERATION_FAILED")
+
+
+class DocumentNotFoundError(KiranaException):
+    def __init__(self, file_path: str):
+        super().__init__(f"Document file at '{file_path}' was not found.", code="DOCUMENT_NOT_FOUND")
+        self.file_path = file_path
+
+
 class EmptyBillError(BillingError):
     def __init__(self, bill_id: int):
         super().__init__(f"Cannot finalize empty bill '{bill_id}'.", code="EMPTY_BILL")
@@ -221,35 +242,59 @@ class TransactionFailedError(ApplicationError):
 
 
 # ---------------------------------------------------------------------------
-# Ollama & Model specific exceptions
+# LLM Provider & Model specific exceptions
 # ---------------------------------------------------------------------------
 
-class OllamaError(KiranaException):
+class LLMProviderError(KiranaException):
+    """Base exception for all LLM provider interactions."""
+    def __init__(self, message: str, code: str = "LLM_PROVIDER_ERROR"):
+        super().__init__(message, code=code)
+
+
+class LLMAuthenticationError(LLMProviderError):
+    """Raised when LLM provider authentication fails (e.g. missing or invalid API key)."""
+    def __init__(self, message: str = "LLM provider authentication failed."):
+        super().__init__(message, code="LLM_AUTHENTICATION_ERROR")
+
+
+class LLMUnavailableError(LLMProviderError):
+    """Raised when LLM provider service cannot be reached."""
+    def __init__(self, message: str = "LLM provider service is unavailable."):
+        super().__init__(message, code="LLM_UNAVAILABLE")
+
+
+class LLMTimeoutError(LLMProviderError):
+    """Raised when request to LLM provider times out."""
+    def __init__(self, message: str = "LLM provider request timed out."):
+        super().__init__(message, code="LLM_TIMEOUT")
+
+
+class OllamaError(LLMProviderError):
     """Base exception for Ollama/Model interactions."""
     def __init__(self, message: str, code: str = "OLLAMA_ERROR"):
         super().__init__(message, code=code)
 
 
-class OllamaUnavailableError(OllamaError):
+class OllamaUnavailableError(OllamaError, LLMUnavailableError):
     """Raised when Ollama service cannot be reached."""
     def __init__(self, message: str = "Ollama service is unavailable at configured host."):
         super().__init__(message, code="OLLAMA_UNAVAILABLE")
 
 
-class OllamaTimeoutError(OllamaError):
+class OllamaTimeoutError(OllamaError, LLMTimeoutError):
     """Raised when request to Ollama times out."""
     def __init__(self, message: str = "Ollama request timed out."):
         super().__init__(message, code="OLLAMA_TIMEOUT")
 
 
-class ModelNotFoundError(OllamaError):
-    """Raised when specified model is not pulled in Ollama."""
+class ModelNotFoundError(LLMProviderError):
+    """Raised when specified model is not found in provider."""
     def __init__(self, model_name: str):
-        super().__init__(f"Model '{model_name}' was not found in Ollama.", code="MODEL_NOT_FOUND")
+        super().__init__(f"Model '{model_name}' was not found.", code="MODEL_NOT_FOUND")
         self.model_name = model_name
 
 
-class InvalidModelResponseError(OllamaError):
+class InvalidModelResponseError(LLMProviderError):
     """Raised when model returns malformed response or invalid action schema."""
     def __init__(self, message: str = "Model returned invalid action schema."):
         super().__init__(message, code="INVALID_MODEL_RESPONSE")

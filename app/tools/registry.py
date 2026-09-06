@@ -53,6 +53,8 @@ from app.tools.schemas import (
     GetPreferenceInput,
     SetPreferenceInput,
     ListPreferencesInput,
+    GenerateInvoicePDFInput,
+    GenerateSalesAnalysisPPTXInput,
 )
 
 
@@ -155,6 +157,7 @@ from app.tools.khata import (
 )
 from app.tools.reporting import get_daily_sales, get_monthly_sales, get_product_performance
 from app.tools.preferences import get_user_preferences, update_user_preferences
+from app.tools.documents import generate_invoice_pdf, generate_sales_analysis_pptx
 
 # Inventory tools
 registry.register("search_products", "Search products by name, SKU, or category.", SearchProductsInput, search_products)
@@ -188,6 +191,10 @@ registry.register("get_product_performance", "Return sales performance for a pro
 # Preference tools
 registry.register("get_user_preferences", "Fetch stored UI/behavior preferences for a user.", GetPreferenceInput, get_user_preferences)
 registry.register("update_user_preferences", "Persist updated preferences for a user.", SetPreferenceInput, update_user_preferences)
+
+# Document tools
+registry.register("generate_invoice_pdf", "Generate a PDF tax invoice for a finalized bill.", GenerateInvoicePDFInput, generate_invoice_pdf)
+registry.register("generate_sales_analysis_pptx", "Generate an 8-slide PowerPoint presentation analyzing sales performance.", GenerateSalesAnalysisPPTXInput, generate_sales_analysis_pptx)
 
 
 # Module-level convenience functions delegating to singleton registry instance

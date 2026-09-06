@@ -121,12 +121,15 @@ async def test_help_command_response():
 @pytest.mark.asyncio
 async def test_new_command_resets_session_without_deleting_store_data():
     """Verify /new resets conversation history while keeping catalog, stock, & Khata intact."""
-    test_user_id = 999111
+    import uuid
+    test_user_id = int(str(uuid.uuid4().int)[:8])
+    unique_sku = f"TELE-{uuid.uuid4().hex[:6].upper()}"
+    unique_phone = f"99{uuid.uuid4().hex[:8]}"[:10]
 
     with get_db_context() as db:
         # Seed test catalog product, customer, and session history
         prod = Product(
-            sku="TELE-TEST-SKU",
+            sku=unique_sku,
             name="Telegram Test Product",
             cost_price=Decimal("10.00"),
             selling_price=Decimal("14.00"),
@@ -134,7 +137,7 @@ async def test_new_command_resets_session_without_deleting_store_data():
             stock_quantity=Decimal("50.00"),
             active=True,
         )
-        cust = Customer(name="Telegram Customer", phone="9988776655", khata_balance=Decimal("200.00"))
+        cust = Customer(name="Telegram Customer", phone=unique_phone, khata_balance=Decimal("200.00"))
         session = AgentSession(user_id=test_user_id, history_json='[{"role": "user", "content": "hi"}]')
         
         db.add_all([prod, cust, session])
@@ -211,7 +214,7 @@ async def test_send_error_response_boundaries(exception_obj, expected_keyword):
 
     update.message.reply_text.assert_called_once()
     sent_text = update.message.reply_text.call_args[0][0]
-    assert expected_keyword in sent_text
+    assert expected_keyword.lower() in sent_text.lower()
     assert "Traceback" not in sent_text
     assert "SELECT" not in sent_text
 

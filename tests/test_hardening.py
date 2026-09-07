@@ -102,29 +102,39 @@ def test_finalize_idempotent():
 # ---------------------------------------------------------------------------
 
 def test_concurrent_receive_stock():
+    import threading
     import app.db.database as db_mod
     db_mod.init_db()
     with db_mod.SessionLocal() as db:
         product = _create_test_product(db)
         product_id = product.id
 
+    worker_errors = []
+    lock = threading.Lock()
+
     def worker(qty):
+        last_exc = None
         for _ in range(15):
             try:
                 with db_mod.SessionLocal() as db:
                     receive_stock(db, product_id, quantity=qty, cost_price=Decimal("9.00"), mrp=Decimal("14.00"))
-                break
-            except Exception:
+                return
+            except Exception as exc:
+                last_exc = exc
                 import time
                 time.sleep(0.1)
 
-    import threading
+        with lock:
+            worker_errors.append(last_exc)
+
     t1 = threading.Thread(target=worker, args=(5,))
     t2 = threading.Thread(target=worker, args=(7,))
     t1.start()
     t2.start()
     t1.join()
     t2.join()
+
+    assert not worker_errors, f"Worker thread(s) failed: {worker_errors}"
 
     with db_mod.SessionLocal() as db:
         final = db.query(Product).filter_by(id=product_id).first()
@@ -133,6 +143,7 @@ def test_concurrent_receive_stock():
 
 def test_concurrent_adjust_stock():
     """Verify concurrent positive and negative stock adjustments compute exact final balance."""
+    import threading
     import app.db.database as db_mod
     db_mod.init_db()
     with db_mod.SessionLocal() as db:
@@ -141,23 +152,32 @@ def test_concurrent_adjust_stock():
         db.commit()
         product_id = product.id
 
+    worker_errors = []
+    lock = threading.Lock()
+
     def worker(change, reason):
+        last_exc = None
         for _ in range(15):
             try:
                 with db_mod.SessionLocal() as db:
                     adjust_stock(db, product_id, quantity_change=change, reason=reason)
-                break
-            except Exception:
+                return
+            except Exception as exc:
+                last_exc = exc
                 import time
                 time.sleep(0.1)
 
-    import threading
+        with lock:
+            worker_errors.append(last_exc)
+
     t1 = threading.Thread(target=worker, args=(Decimal("15.00"), "Received shipment"))
     t2 = threading.Thread(target=worker, args=(Decimal("-3.00"), "Damaged goods"))
     t1.start()
     t2.start()
     t1.join()
     t2.join()
+
+    assert not worker_errors, f"Worker thread(s) failed: {worker_errors}"
 
     with db_mod.SessionLocal() as db:
         final = db.query(Product).filter_by(id=product_id).first()

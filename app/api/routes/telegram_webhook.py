@@ -69,6 +69,8 @@ async def telegram_webhook(
         )
 
     update_id = getattr(update, "update_id", "unknown")
+    from app.logging_config import set_correlation_id
+    set_correlation_id(f"corr_tg_{update_id}")
     logger.info(f"Processing Telegram Webhook update_id={update_id}")
 
     try:

@@ -122,3 +122,29 @@ def test_sqlalchemy_and_postgres_driver_imports():
     assert sqlalchemy.__version__ is not None
     assert psycopg.__version__ is not None
 
+
+def test_init_db_postgresql_schema_migration_execution():
+    """Verify run_init_db executes ALTER TABLE users ALTER COLUMN telegram_user_id TYPE BIGINT when dialect is postgresql."""
+    mock_engine = MagicMock()
+    mock_engine.dialect.name = "postgresql"
+    mock_conn = MagicMock()
+    mock_engine.begin.return_value.__enter__.return_value = mock_conn
+
+    with patch("scripts.init_db._configure_engine", return_value=mock_engine), \
+         patch("scripts.init_db.Base.metadata.create_all"), \
+         patch("scripts.init_db.inspect") as mock_inspect:
+        mock_inspector = MagicMock()
+        mock_inspector.get_table_names.return_value = [
+            "stores", "users", "products", "stock_movements", "customers",
+            "bills", "bill_items", "khata_transactions", "owner_preferences", "agent_sessions"
+        ]
+        mock_inspect.return_value = mock_inspector
+
+        success = run_init_db("postgresql+psycopg://user:pass@localhost:5432/testdb")
+        assert success is True
+
+        # Verify SQL statement executed
+        assert mock_conn.execute.called
+        executed_sql = str(mock_conn.execute.call_args[0][0])
+        assert "ALTER TABLE users ALTER COLUMN telegram_user_id TYPE BIGINT" in executed_sql
+

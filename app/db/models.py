@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     Integer,
+    BigInteger,
     CheckConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -38,7 +39,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True)
-    telegram_user_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, index=True, nullable=True)
+    telegram_user_id: Mapped[Optional[int]] = mapped_column(BigInteger, unique=True, index=True, nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="OPERATOR", nullable=False)  # OWNER, OPERATOR
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

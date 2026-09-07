@@ -200,3 +200,38 @@ def test_health_and_readiness_endpoints_unaffected():
     res_ready = client.get("/ready")
     assert res_ready.status_code == 200
     assert res_ready.json()["status"] == "ready"
+
+
+def test_bot_main_disables_polling_in_webhook_mode(capsys):
+    """Verify bot.main() detects TELEGRAM_MODE=webhook and exits without launching polling loop."""
+    from app.telegram.bot import main as bot_main
+
+    with patch("app.telegram.bot.get_settings") as mock_get_settings:
+        mock_settings = MagicMock()
+        mock_settings.telegram_mode = "webhook"
+        mock_get_settings.return_value = mock_settings
+
+        # Invoke bot.main() in webhook mode
+        bot_main()
+        captured = capsys.readouterr()
+        assert "Local polling is disabled" in captured.out or "TELEGRAM_MODE is configured as 'webhook'" in captured.out
+
+
+@pytest.mark.asyncio
+async def test_delete_webhook_script():
+    """Verify scripts/delete_webhook.py calls bot.delete_webhook() safely."""
+    from scripts.delete_webhook import delete_webhook_async
+
+    mock_bot = AsyncMock()
+    mock_bot.delete_webhook = AsyncMock(return_value=True)
+    mock_bot.get_webhook_info = AsyncMock()
+
+    with patch("scripts.delete_webhook.get_settings") as mock_get_settings, \
+         patch("scripts.delete_webhook.Bot", return_value=mock_bot):
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "123456:ABC-DEF1234ghIkl-zyx57"
+        mock_get_settings.return_value = mock_settings
+
+        await delete_webhook_async()
+        mock_bot.delete_webhook.assert_called_once()
+

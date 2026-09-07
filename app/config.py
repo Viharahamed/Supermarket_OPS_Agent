@@ -69,6 +69,12 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
 
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def parse_log_level(cls, v: str) -> str:
+        from app.logging_config import validate_log_level
+        return validate_log_level(v)
+
     @model_validator(mode="after")
     def validate_environment(self) -> "Settings":
         env = self.app_env.lower().strip()
@@ -94,6 +100,8 @@ class Settings(BaseSettings):
         if env == "production":
             if self.debug:
                 raise ValueError("DEBUG must be False in production environment.")
+            if self.log_level == "DEBUG":
+                raise ValueError("LOG_LEVEL cannot be DEBUG in production environment.")
             if self.llm_provider.lower().strip() == "openrouter" and not self.openrouter_api_key.strip():
                 raise ValueError("OPENROUTER_API_KEY is required in production when LLM_PROVIDER=openrouter.")
 

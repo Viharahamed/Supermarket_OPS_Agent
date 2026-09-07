@@ -76,6 +76,54 @@ def test_unauthorized_telegram_user_rejection(db_session: Session):
     assert auth is None
 
 
+def test_telegram_user_id_64bit_overflow_regression(db_session: Session):
+    """Verify 64-bit Telegram user IDs (e.g., production ID 5868796693 > 2^31 - 1) persist, query, and authenticate without overflow."""
+    large_tg_id = 5868796693
+    normal_tg_id = 1001
+
+    # 1. Bootstrap user with 64-bit Telegram user ID
+    principal_large = bootstrap_store_and_user(
+        store_name="64Bit Test Store",
+        telegram_user_id=large_tg_id,
+        user_name="Large ID Owner",
+        db=db_session,
+    )
+    assert principal_large is not None
+    assert principal_large.telegram_user_id == large_tg_id
+
+    # 2. Authenticate 64-bit user
+    auth_principal = authenticate_telegram_user(large_tg_id, db=db_session)
+    assert auth_principal is not None
+    assert auth_principal.telegram_user_id == large_tg_id
+    assert auth_principal.store_id == principal_large.store_id
+
+    # 3. Direct ORM persistence & retrieval check without truncation
+    db_user = db_session.query(User).filter(User.telegram_user_id == large_tg_id).first()
+    assert db_user is not None
+    assert db_user.telegram_user_id == 5868796693
+
+    # 4. Verify existing normal 32-bit small Telegram ID continues to work alongside 64-bit ID
+    principal_normal = bootstrap_store_and_user(
+        store_name="Normal Test Store",
+        telegram_user_id=normal_tg_id,
+        user_name="Normal ID Owner",
+        db=db_session,
+    )
+    assert authenticate_telegram_user(normal_tg_id, db=db_session).telegram_user_id == 1001
+
+
+def test_sqlalchemy_postgresql_dialect_bigint_query_compilation():
+    """Verify SQLAlchemy query compilation for User.telegram_user_id uses BIGINT typing and does not cast to ::INTEGER in PostgreSQL."""
+    from sqlalchemy import select
+    from sqlalchemy.dialects import postgresql
+
+    stmt = select(User).where(User.telegram_user_id == 5868796693)
+    compiled_sql = str(stmt.compile(dialect=postgresql.dialect()))
+
+    # Ensure ::INTEGER casting is no longer produced for telegram_user_id
+    assert "users.telegram_user_id = %(telegram_user_id_1)s::INTEGER" not in compiled_sql
+
+
 def test_product_isolation(setup_multi_tenant_stores, db_session: Session):
     """4. Test product creation, search, and stock query isolation."""
     p_a, p_b, _, _ = setup_multi_tenant_stores
@@ -250,4 +298,29 @@ def test_negative_llm_store_id_injection_rejection(setup_multi_tenant_stores, db
         assert len(res.data) == 0
     else:
         assert res.error.code == "INVALID_TOOL_ARGUMENTS"
+
+
+def test_role_authorization_owner_vs_operator(setup_multi_tenant_stores, db_session: Session):
+    """Verify OWNER and OPERATOR role authorization checks."""
+    from app.auth import AuthenticatedPrincipal, check_authorization, require_owner, require_operator
+    from app.exceptions import RoleNotAllowedError
+
+    owner = AuthenticatedPrincipal(user_id=1, store_id=1, role="OWNER", name="Owner User")
+    operator = AuthenticatedPrincipal(user_id=2, store_id=1, role="OPERATOR", name="Operator User")
+
+    # OWNER permissions
+    assert check_authorization(owner, "OWNER") is True
+    assert check_authorization(owner, "OPERATOR") is True
+    require_owner(owner)
+    require_operator(owner)
+
+    # OPERATOR permissions
+    assert check_authorization(operator, "OPERATOR") is True
+    assert check_authorization(operator, "OWNER") is False
+    require_operator(operator)
+
+    # OPERATOR attempting OWNER-only action throws RoleNotAllowedError
+    with pytest.raises(RoleNotAllowedError):
+        require_owner(operator)
+
 

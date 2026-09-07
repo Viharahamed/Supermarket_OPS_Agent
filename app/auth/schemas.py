@@ -1,6 +1,6 @@
 """Authentication and Principal schemas for Kirana AI Agent."""
 from typing import Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuthenticatedPrincipal(BaseModel):
@@ -17,5 +17,4 @@ class ToolExecutionContext(BaseModel):
     principal: AuthenticatedPrincipal = Field(..., description="Authenticated principal executing the tool")
     db: Optional[Any] = Field(None, description="Optional SQLAlchemy database session")
 
-    class Config:
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)

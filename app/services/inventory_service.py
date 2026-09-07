@@ -195,9 +195,10 @@ def receive_stock(
             notes=notes or f"Received stock: +{qty_dec} {product.unit}",
         )
         db.add(movement)
+        db.flush()
+        dto = stock_movement_to_dto(movement)
         db.commit()
-        db.refresh(movement)
-        return stock_movement_to_dto(movement)
+        return dto
     except Exception:
         db.rollback()
         raise
@@ -250,9 +251,10 @@ def adjust_stock(
             notes=reason.strip(),
         )
         db.add(movement)
+        db.flush()
+        dto = stock_movement_to_dto(movement)
         db.commit()
-        db.refresh(movement)
-        return stock_movement_to_dto(movement)
+        return dto
     except Exception:
         db.rollback()
         raise

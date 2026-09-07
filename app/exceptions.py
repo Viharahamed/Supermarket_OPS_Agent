@@ -326,3 +326,39 @@ class InvalidModelResponseError(LLMProviderError):
     def __init__(self, message: str = "Model returned invalid action schema."):
         super().__init__(message, code="INVALID_MODEL_RESPONSE")
 
+
+# ---------------------------------------------------------------------------
+# Authentication & Multi-Tenancy Exceptions (Phase 14)
+# ---------------------------------------------------------------------------
+
+class AuthenticationRequiredError(KiranaException):
+    def __init__(self, message: str = "Authentication is required to perform this action."):
+        super().__init__(message, code="AUTHENTICATION_REQUIRED")
+
+
+class MembershipNotFoundError(KiranaException):
+    def __init__(self, user_id: int):
+        super().__init__(f"No active store membership found for user '{user_id}'.", code="MEMBERSHIP_NOT_FOUND")
+        self.user_id = user_id
+
+
+class StoreAccessDeniedError(KiranaException):
+    def __init__(self, message: str = "Access to the requested store context is denied."):
+        super().__init__(message, code="STORE_ACCESS_DENIED")
+
+
+class RoleNotAllowedError(KiranaException):
+    def __init__(self, role: str, required_role: str = "OWNER"):
+        super().__init__(
+            f"User role '{role}' is not allowed to perform '{required_role}' operations.",
+            code="ROLE_NOT_ALLOWED",
+        )
+        self.role = role
+        self.required_role = required_role
+
+
+class CrossTenantAccessDeniedError(KiranaException):
+    def __init__(self, message: str = "Cross-tenant access attempt detected and rejected."):
+        super().__init__(message, code="CROSS_TENANT_ACCESS_DENIED")
+
+

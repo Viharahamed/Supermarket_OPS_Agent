@@ -129,3 +129,42 @@ def bootstrap_store_and_user(
             return _bootstrap(session)
     return _bootstrap(db)
 
+
+def check_authorization(principal: Optional[AuthenticatedPrincipal], required_role: str = "OPERATOR") -> bool:
+    """Check if the authenticated principal has permission for the specified role.
+
+    OWNER role grants access to all store operations and configuration.
+    OPERATOR role grants access to operational tasks (inventory, billing, customer management).
+    """
+    if not principal:
+        return False
+    role = (principal.role or "OPERATOR").upper().strip()
+    req = required_role.upper().strip()
+
+    if role == "OWNER":
+        return True
+    if role == "OPERATOR" and req == "OPERATOR":
+        return True
+    return False
+
+
+def require_role(principal: Optional[AuthenticatedPrincipal], required_role: str = "OPERATOR") -> None:
+    """Enforce role permissions, raising RoleNotAllowedError if principal lacks required role."""
+    from app.exceptions import AuthenticationRequiredError, RoleNotAllowedError
+
+    if not principal:
+        raise AuthenticationRequiredError("Authentication principal is missing.")
+    if not check_authorization(principal, required_role):
+        raise RoleNotAllowedError(role=principal.role, required_role=required_role)
+
+
+def require_owner(principal: Optional[AuthenticatedPrincipal]) -> None:
+    """Enforce OWNER-only role authorization."""
+    require_role(principal, required_role="OWNER")
+
+
+def require_operator(principal: Optional[AuthenticatedPrincipal]) -> None:
+    """Enforce OPERATOR or OWNER role authorization."""
+    require_role(principal, required_role="OPERATOR")
+
+

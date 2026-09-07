@@ -30,7 +30,7 @@ for _vp in _venv_search_paths:
             if _sp_str not in sys.path:
                 sys.path.insert(0, _sp_str)
 
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from app.config import get_settings
 from app.db.database import Base, _configure_engine
 import app.db.models  # Ensures all ORM models are registered with Base.metadata
@@ -79,6 +79,13 @@ def run_init_db(custom_db_url: str | None = None) -> bool:
 
         # Create missing database tables
         Base.metadata.create_all(bind=engine)
+
+        # Idempotent PostgreSQL schema migration for Telegram User ID 64-bit support
+        if engine.dialect.name == "postgresql":
+            logger.info("Executing PostgreSQL schema migration: ALTER TABLE users ALTER COLUMN telegram_user_id TYPE BIGINT...")
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE users ALTER COLUMN telegram_user_id TYPE BIGINT;"))
+            logger.info("✅ Verified users.telegram_user_id is BIGINT in PostgreSQL.")
 
         # Inspect engine tables to verify successful creation
         inspector = inspect(engine)

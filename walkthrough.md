@@ -1,64 +1,53 @@
-# Walkthrough — Phase 13B.2: Production Document Storage & Persistence
+# Walkthrough — Phase 16: Monitoring + CI/CD + Final Testing + Submission
 
-Phase 13B.2 establishes a clean, decoupled, security-hardened document storage abstraction layer for PDF invoices and PPTX presentation decks.
-
-## Summary of Accomplishments
-
-### 1. Document Storage Architecture (`app/storage/`)
-- **Abstract Interface (`DocumentStorage`)**: Created standard `DocumentStorage` interface in `app/storage/base.py` declaring `save()`, `read()`, `exists()`, `delete()`, and `get_path()`.
-- **Local Filesystem Implementation (`LocalStorageBackend`)**: Implemented robust filesystem storage in `app/storage/local.py` supporting development (`LOCAL_DOCUMENT_DIR=generated`) and Railway persistent Volume mounts (`LOCAL_DOCUMENT_DIR=/app/data/generated`).
-- **Path Security & Anti-Traversal**: Implemented `_validate_relative_path()` preventing path traversal attacks:
-  - Null bytes (`\0`) rejected.
-  - Absolute paths (`/etc/passwd`, `C:\...`) rejected.
-  - Parent traversal sequences (`../`, `..\`) rejected.
-  - Verifies target path is strictly contained within storage root using `pathlib.Path.relative_to()`.
-- **Type-Safe Artifact Schema**: Created `ArtifactResult` Pydantic model (`app/storage/schemas.py`) encapsulating `artifact_type`, `file_name`, `file_path`, `relative_path`, `content_type`, and `size_bytes`.
-- **Factory Pattern**: Implemented `get_storage()` and `set_storage()` in `app/storage/factory.py` sourcing configuration cleanly from `app.config.get_settings()`.
-
-### 2. Document Generator Decoupling
-- **PDF Invoice Generator (`app/documents/invoice_pdf.py`)**:
-  - Decoupled from direct filesystem writes by building ReportLab PDFs into memory (`io.BytesIO()`).
-  - Stores binary PDF content via `get_storage().save()`.
-- **PPTX Sales Analysis Generator (`app/documents/sales_pptx.py`)**:
-  - Uses `tempfile.TemporaryDirectory()` for temporary Matplotlib chart image rendering.
-  - Builds presentation into memory (`io.BytesIO()`) and stores binary `.pptx` via `get_storage().save()`.
-
-### 3. Telegram & Storage Integration
-- **Telegram Attachment Delivery (`app/telegram/handlers.py`)**:
-  - Sourcing document attachments using `get_storage()` to resolve and verify file existence before sending files to Telegram users.
-
-### 4. Comprehensive Storage Test Suite (`tests/test_storage.py`)
-- Unit tests added covering:
-  - Binary save and read verification.
-  - File existence and deletion checks.
-  - Missing artifact exception handling (`DocumentNotFoundError`).
-  - Nested directory creation (`invoices/2026/09/invoice_1001.pdf`).
-  - Path traversal rejection (`../`, `..\`, null bytes, absolute paths).
-  - Exact binary content preservation.
-  - Same-filename regeneration overwrite safety for finalized invoices.
-  - Factory configuration tests with custom directories.
+We have successfully implemented and completed **Phase 16** of the Kirana AI Agent codebase.
 
 ---
 
-## Verification Results
+## Accomplished Work
 
-### Test Execution Baseline
-- `tests/test_storage.py` and `tests/test_documents.py` fully integrated with storage abstraction.
-- All path traversal security, binary integrity, PDF magic header, PPTX slide structure, and Telegram document attachment tests designed for 100% green execution.
+### 1. Operational Logging & Correlation Tracking
+- Created [app/logging_config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/logging_config.py):
+  - Injected thread-safe and async-safe correlation IDs using `contextvars.ContextVar`.
+  - Added `SecretMaskingFormatter` to redact Telegram bot tokens (`TELEGRAM_BOT_TOKEN`), OpenRouter API keys (`OPENROUTER_API_KEY`), and database connection passwords.
+  - Implemented `validate_log_level` supporting `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` with strict production mode constraints (prohibits `DEBUG` in production).
+- Updated [app/config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/config.py) to validate and normalize `LOG_LEVEL`.
+- Updated [app/api/main.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/main.py) with correlation middleware (`X-Correlation-ID`) and application lifecycle logs.
+- Updated [app/api/routes/telegram_webhook.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/routes/telegram_webhook.py) to track Telegram update correlation context (`corr_tg_<update_id>`).
+
+### 2. GitHub Actions CI/CD Pipeline
+- Created [.github/workflows/ci.yml](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/.github/workflows/ci.yml):
+  - Automated CI trigger on `push` and `pull_request` to `main`/`master`.
+  - Set up Python 3.12 runner on `ubuntu-latest`.
+  - Installs requirements and runs `pytest -q` in isolated test mode (`APP_ENV=test`, in-memory database).
+
+### 3. Comprehensive End-to-End Scenarios Test Suite (A through M)
+- Created [tests/test_phase16_e2e_scenarios.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/tests/test_phase16_e2e_scenarios.py):
+  - **Scenario A**: Stock receive, cost/MRP update, purchase movement log.
+  - **Scenario B**: Multi-item draft bill, price grounding, GST math, zero stock decrement on draft.
+  - **Scenario C**: Draft bill edit (drop item, change qty), stock untouched.
+  - **Scenario D**: Atomic bill finalization, payment recording, bill immutability, idempotent re-finalization.
+  - **Scenario E**: Oversell rejection (`InsufficientStockError`), stock safety guard.
+  - **Scenario F**: Customer Khata ledger credit and payment settlement, balance check.
+  - **Scenario G**: Daily close sales summary report with Asia/Kolkata timezone boundaries.
+  - **Scenario H**: PDF invoice document artifact generation with `%PDF-` header validation.
+  - **Scenario I**: PPTX weekly sales analysis presentation artifact generation with `PK\x03\x04` header validation.
+  - **Scenario J**: Persistent owner preference storage and retrieval across context.
+  - **Scenario K**: `/new` command clearing session memory history while keeping database records safe.
+  - **Scenario L**: Multi-tenancy context isolation (`store_id` boundaries).
+  - **Scenario M**: Telegram webhook secret token validation (200 OK vs 403 Forbidden).
+  - **Logging & Security Tests**: Correlation ID propagation, log level validation, secret masking.
+
+### 4. Finalized Documentation & Submission Readiness
+- Updated [README.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/README.md) with comprehensive 1-page overview covering architecture, LLM dual-provider design, agent loop, tool safety, multi-tenancy, and testing.
+- Updated [docs/architecture.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/architecture.md) with system architecture details.
+- Created [docs/demo_script.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/demo_script.md) for 4–5 minute live demonstration flow.
+- Created [docs/submission_checklist.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/submission_checklist.md) tracking repository, application, reliability, testing, and future deployment items.
 
 ---
 
-## Railway Volume Persistence Strategy
+## Final Security & Safety Verification
 
-```
-Railway Web Service
-   └── Mounted Railway Volume (/app/data/generated)
-          ├── invoices/
-          │     └── invoice_BILL-20260907-XXXX.pdf
-          └── reports/
-                └── sales_analysis_2026-09-01_2026-09-07.pptx
-```
-
-- Production configuration: `DOCUMENT_STORAGE=local` with `LOCAL_DOCUMENT_DIR=/app/data/generated`.
-- Railway provides durability by mounting a volume at `/app/data/generated`.
-- Document generators and Telegram handlers remain 100% cloud-SDK-free.
+- **No Secrets Exposed**: All sensitive configuration options (`TELEGRAM_BOT_TOKEN`, `OPENROUTER_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`) use placeholders in `.env.example`.
+- **Database Initializer**: `scripts/init_db.py` remains the single explicit database schema initializer via `Base.metadata.create_all()`.
+- **Railway Deployment**: Intentionally **NOT** executed during Phase 16, as instructed.

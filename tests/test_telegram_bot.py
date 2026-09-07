@@ -221,6 +221,43 @@ async def test_text_message_handler_routing():
 
 
 @pytest.mark.asyncio
+async def test_text_message_handler_with_64bit_telegram_user_id():
+    """Verify Telegram message handler accepts and authenticates 64-bit Telegram user IDs (e.g. 5868796693)."""
+    from app.auth.service import bootstrap_store_and_user
+    large_tg_id = 5868796693
+
+    with get_db_context() as db:
+        bootstrap_store_and_user(
+            store_name="64Bit Telegram Store",
+            telegram_user_id=large_tg_id,
+            user_name="64Bit Telegram User",
+            db=db,
+        )
+
+    update = MagicMock()
+    update.message.text = "How much stock do we have?"
+    update.effective_user.id = large_tg_id
+    update.effective_chat.id = 987654321
+    update.message.reply_text = AsyncMock()
+
+    context = MagicMock()
+
+    with patch("app.telegram.handlers.handle_message") as mock_handle:
+        mock_handle.return_value = AgentResponse(
+            content="Stock balance is 50 items.",
+            metadata={"iterations": 1},
+        )
+
+        await text_message_handler(update, context)
+
+        mock_handle.assert_called_once()
+        _, kwargs = mock_handle.call_args
+        assert kwargs["context"].principal.telegram_user_id == 5868796693
+        update.message.reply_text.assert_called_once()
+        assert "Stock balance is 50 items." in update.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("exception_obj, expected_keyword", [
     (OllamaUnavailableError("Service down"), "AI Service"),
     (OllamaTimeoutError("Request timed out"), "timed out"),

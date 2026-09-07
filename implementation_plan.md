@@ -1,118 +1,112 @@
-# 🚀 Implementation Plan — Phase 15: Telegram Webhook + Production Railway Deployment
+# Implementation Plan — Phase 16: Monitoring + CI/CD + Final Testing + Submission
 
-Moving the Telegram bot from local polling (`TELEGRAM_MODE=polling`) to production webhook operation (`TELEGRAM_MODE=webhook`) on Railway, while preserving 100% backward compatibility for local polling during development.
+We are executing Phase 16 of the Kirana/Supermarket Conversational AI Agent system. This phase focuses on operational monitoring, lightweight request correlation, GitHub Actions CI/CD, end-to-end integration test scenarios (A through M), artifact validation, security boundaries, project documentation, demo script, and submission readiness.
+
+> [!IMPORTANT]
+> Railway deployment, production Telegram webhook registration, Redis, Docker, and external infrastructure additions are explicitly out of scope for Phase 16 and will NOT be performed.
 
 ---
 
-## 🎯 Architectural Overview
+## User Review Required
 
-```
-[Production Webhook Flow]
-Telegram Platform
-   │
-   ▼ HTTPS POST (Header: X-Telegram-Bot-Api-Secret-Token)
-Railway FastAPI App (POST /telegram/webhook)
-   │
-   ├── 1. Validate Secret Token Header (HTTP 403 if invalid)
-   ├── 2. Convert JSON payload to telegram.Update object
-   ▼
-Telegram Application (python-telegram-bot)
-   │
-   ▼
-Existing Handlers (app/telegram/handlers.py)
-   │
-   ├── Phase 14 Telegram User Authentication (users table)
-   ├── Context Construction (ToolExecutionContext + AuthenticatedPrincipal)
-   ▼
-Agent Harness (app/agent/) -> Tool Registry -> Services -> PostgreSQL
-```
+> [!NOTE]
+> - **Correlation ID Mechanism**: Introduced using standard Python `contextvars` and logging filters (`[corr_id=...]`), propagating correlation IDs across FastAPI webhook HTTP requests, Telegram update handlers, and agent tool execution loops without external tracing dependencies.
+> - **CI Pipeline**: Standard GitHub Actions workflow running on Python 3.12, installing dependencies from `requirements.txt`, and running `pytest -q`.
+> - **Database Initializer**: `scripts/init_db.py` remains the authoritative schema initializer using `Base.metadata.create_all()`.
+> - **Deployment Items**: All Railway deployment items in `docs/submission_checklist.md` will intentionally remain UNCHECKED `[ ]` until deployment is performed in a subsequent step.
+
+---
+
+## Open Questions
+
+None. All scope boundaries and requirements for Phase 16 are clear and unambiguous.
 
 ---
 
 ## Proposed Changes
 
-### Centralized Configuration Layer
+### Core System & Logging
 
-#### [MODIFY] [app/config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/config.py)
-#### [MODIFY] [.env.example](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/.env.example)
+#### [NEW] [logging_config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/logging_config.py)
+- Create `CorrelationIdFilter` using `contextvars.ContextVar` for thread/async-safe request correlation ID tracking.
+- Create `SecretMaskingFormatter` ensuring sensitive tokens (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`, DB passwords) are never emitted in plain text.
+- Provide `setup_logging(log_level: str)` function supporting `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Rejects or normalizes invalid log levels.
 
-- Add new setting fields:
-  - `telegram_webhook_secret: str` (alias `TELEGRAM_WEBHOOK_SECRET`)
-  - `public_base_url: str` (alias `PUBLIC_BASE_URL`)
-- Update `validate_environment()`:
-  - If `telegram_mode == "webhook"`:
-    - Validate `telegram_webhook_secret` is non-empty.
-    - Validate `public_base_url` is non-empty and starts with `https://`.
-  - If `telegram_mode == "polling"`:
-    - Webhook secret and public base URL are optional.
-- Add `telegram_webhook_secret` masking to `Settings.__repr__()`.
+#### [MODIFY] [config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/config.py)
+- Add `@field_validator("log_level")` to validate and normalize `LOG_LEVEL` against allowed levels (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+- Ensure `production` mode strictly disallows `DEBUG`.
 
----
+#### [MODIFY] [main.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/main.py)
+- Call `setup_logging()` during application initialization.
+- Add FastAPI middleware to generate and inject `X-Correlation-ID` header into request state and context contextvar.
+- Log application startup, shutdown, and route access events.
 
-### FastAPI Webhook Endpoint & Lifespan Management
+#### [MODIFY] [telegram_webhook.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/routes/telegram_webhook.py)
+- Set correlation ID on incoming webhook payload processing.
+- Log webhook acceptances (HTTP 200), secret rejections (HTTP 401/403), and malformed payloads (HTTP 400).
 
-#### [NEW] [app/api/routes/telegram_webhook.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/routes/telegram_webhook.py)
-- `POST /telegram/webhook` endpoint:
-  - Validates `X-Telegram-Bot-Api-Secret-Token` header against `settings.telegram_webhook_secret`. Returns HTTP 403 Forbidden on mismatch/missing header.
-  - Receives raw JSON update payload (rejects malformed JSON with HTTP 400).
-  - Retrieves `telegram_app` from `request.app.state.telegram_app`.
-  - Converts raw JSON dict to `telegram.Update.de_json(data, telegram_app.bot)`.
-  - Executes `await telegram_app.process_update(update)`.
-  - Returns HTTP 200 `{"status": "ok"}`.
-  - Excludes raw update payloads and user message contents from error logs to prevent secret / PII leakage.
+#### [MODIFY] [handlers.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/telegram/handlers.py)
+- Set correlation context for Telegram updates (`corr_tg_<update_id>`).
+- Log command execution, unauthorized user access attempts, and agent response latency.
 
-#### [MODIFY] [app/api/main.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/api/main.py)
-- Add FastAPI `lifespan` context manager:
-  - On startup: if `TELEGRAM_MODE=webhook`, builds Telegram `Application` via `build_application()`, calls `await telegram_app.initialize()`, `await telegram_app.start()`, and stores instance in `app.state.telegram_app`.
-  - On shutdown: if `TELEGRAM_MODE=webhook`, executes `await telegram_app.stop()`, `await telegram_app.shutdown()`.
-- Include `telegram_webhook_router` into FastAPI app.
+#### [MODIFY] [agent.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/agent/agent.py)
+- Log agent reasoning iteration loops, tool execution start/end/failures, and final response generation.
 
 ---
 
-### Telegram Bot Runner & Webhook Registration
+### CI/CD Pipeline
 
-#### [MODIFY] [app/telegram/bot.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/telegram/bot.py)
-- Update `main()` entrypoint:
-  - Check `settings.telegram_mode`.
-  - If `polling`: runs `app.run_polling()`.
-  - If `webhook`: displays informative message that application is running in webhook mode via FastAPI/Uvicorn, and exits or refrains from polling.
-
-#### [NEW] [scripts/register_webhook.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/scripts/register_webhook.py)
-- Explicit CLI setup utility for production Telegram webhook registration:
-  - Construct webhook URL: `f"{settings.public_base_url.rstrip('/')}/telegram/webhook"`.
-  - Register webhook with Telegram API using `bot.set_webhook(url=..., secret_token=...)`.
-  - Retrieve and log webhook status via `bot.get_webhook_info()` without exposing tokens or secrets.
+#### [NEW] [ci.yml](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/.github/workflows/ci.yml)
+- Create GitHub Actions workflow file `.github/workflows/ci.yml`.
+- Trigger on `push` and `pull_request` to `main`/`master`.
+- Run on `ubuntu-latest` with Python 3.12.
+- Execute `pip install -r requirements.txt` and `pytest -q`.
 
 ---
 
-### Documentation & Runbook
+### Integration & End-to-End Test Suite
+
+#### [NEW] [test_phase16_e2e_scenarios.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/tests/test_phase16_e2e_scenarios.py)
+- **Scenario A (Receive Stock)**: Add 50 Maggi cost 12 MRP 14 -> stock increases, movement recorded, price rules enforced.
+- **Scenario B (Multi-item Bill)**: Create draft bill with 2kg sugar, 1 Aashirvaad atta, 4 Maggi, 1 Amul butter -> prices grounded, GST calculated, stock untouched.
+- **Scenario C (Bill Edit)**: Remove butter, update Maggi qty to 6 -> draft updated, stock untouched.
+- **Scenario D (Finalize Bill)**: Finalize bill -> atomic stock decrement, GST verified, payment recorded, immutable.
+- **Scenario E (Oversell Protection)**: Attempt sell > stock -> rejected, stock not negative.
+- **Scenario F (Khata Ledger)**: Customer credit ₹500, payment ₹300 -> balance ₹200 verified.
+- **Scenario G (Daily Close Report)**: Daily sales total, tax collected, cash vs UPI, Asia/Kolkata date bounds.
+- **Scenario H (PDF Document)**: Finalized bill invoice generation -> readable PDF bytes (`%PDF-`).
+- **Scenario I (PPTX Document)**: Weekly sales analytics generation -> readable PPTX bytes (`PK\x03\x04`).
+- **Scenario J (Persistent Preference)**: Store payment preference ("UPI") -> persisted across conversations.
+- **Scenario K (/new Command)**: Reset conversation session state -> clears draft context, keeps store preferences & stock intact.
+- **Scenario L (Multi-Tenancy Isolation)**: Store A user attempting to query/modify Store B resources -> blocked with `CrossTenantAccessDeniedError` / `StoreAccessDeniedError`.
+- **Scenario M (Webhook Lifecycle)**: Test secret header verification, rejected secrets, malformed requests, and mode checking.
+
+---
+
+### Documentation & Deliverables
 
 #### [MODIFY] [README.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/README.md)
-- Add Section for **Phase 15 — Telegram Webhook & Production Deployment**:
-  - Local Polling mode vs Production Webhook mode.
-  - Webhook secret configuration & HTTPS requirement.
-  - Railway environment variables reference table.
-  - Explicit Alembic schema migration guide (`railway run alembic upgrade head`).
-  - Persistent Railway Volume mount configuration (`LOCAL_DOCUMENT_DIR`).
-  - Production deployment runbook.
+- Complete overview (~1 page): System purpose, Architecture diagram, LLM dual-provider design, Agent control loop, Tool allowlist & safety, Persistent memory vs session state, Document generation (PDF/PPTX), Dual Telegram runtime modes (Polling vs Webhook), and Test summary metrics.
+
+#### [MODIFY] [architecture.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/architecture.md)
+- Comprehensive technical architecture document matching actual codebase implementation.
+
+#### [NEW] [demo_script.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/demo_script.md)
+- 4-5 minute, 14-step live demonstration walkthrough script with expected inputs and system outputs.
+
+#### [NEW] [submission_checklist.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/submission_checklist.md)
+- Final submission readiness checklist categorizing Repository, Application, Reliability, Testing, and Deployment (deployment items left unchecked).
 
 ---
 
-## 🧪 Verification Plan
+## Verification Plan
 
-### Automated Tests (`pytest -v`)
-- Create `tests/test_telegram_webhook.py`:
-  1. `test_webhook_route_exists`: Verify `POST /telegram/webhook` is registered.
-  2. `test_webhook_rejects_get_requests`: `GET /telegram/webhook` returns HTTP 405.
-  3. `test_webhook_rejects_missing_secret_header`: Missing `X-Telegram-Bot-Api-Secret-Token` header returns HTTP 403.
-  4. `test_webhook_rejects_invalid_secret_header`: Invalid secret header returns HTTP 403.
-  5. `test_webhook_accepts_valid_secret_and_processes_update`: Valid secret header + valid update JSON processes update successfully (returns HTTP 200).
-  6. `test_webhook_rejects_malformed_json`: Malformed payload returns HTTP 400.
-  7. `test_config_webhook_mode_validation_missing_secret`: Webhook mode without secret raises configuration error.
-  8. `test_config_webhook_mode_validation_missing_https`: Webhook mode without HTTPS URL raises configuration error.
-  9. `test_config_polling_mode_validation_no_secret_required`: Polling mode passes validation without secret.
-  10. `test_fastapi_lifespan_webhook_app_lifecycle`: Verify FastAPI lifespan initializes and shuts down Telegram Application cleanly.
-  11. `test_health_and_readiness_endpoints_unaffected`: Verify `/health` and `/ready` endpoints remain fast and unaffected by webhook state.
+### Automated Tests
+- Run full pytest test suite: `pytest -q`
+- Run Phase 16 scenario test suite specifically: `pytest -v tests/test_phase16_e2e_scenarios.py`
+- Verify binary header validation for generated PDF (`%PDF-`) and PPTX (`PK\x03\x04`) files.
 
-### Automated Test Baseline
-- Ensure all existing 181 tests continue to pass (target: 190+ passing tests, 0 failures).
+### Manual Verification
+- Review `.env` git exclusion and `.env.example` placeholders.
+- Verify log outputs mask secrets (`TELEGRAM_BOT_TOKEN`, `OPENROUTER_API_KEY`, etc.).
+- Validate YAML syntax of `.github/workflows/ci.yml`.

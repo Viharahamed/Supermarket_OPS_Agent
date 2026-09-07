@@ -2,6 +2,7 @@
 
 A production-grade, conversational AI Store Operations Agent designed specifically for Indian supermarket and Kirana store retail operations. The system automates inventory management, GST-compliant draft and final billing, customer Khata ledger tracking, daily sales reporting, and document generation via Telegram.
 
+TELEGRAM BOT LINK : t.me/kirana_ai_assistant_bot. 
 ---
 
 ## 1. What the System Does

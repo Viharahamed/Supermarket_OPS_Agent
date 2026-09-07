@@ -29,7 +29,7 @@ def _configure_engine(db_url_or_settings: str | Settings | None = None) -> Engin
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 
     if url.startswith("sqlite"):
-        connect_args = {"check_same_thread": False}
+        connect_args = {"check_same_thread": False, "timeout": 15}
         if "uri=true" in url.lower() or "mode=memory" in url.lower() or "cache=shared" in url.lower():
             connect_args["uri"] = True
 
@@ -45,6 +45,7 @@ def _configure_engine(db_url_or_settings: str | Settings | None = None) -> Engin
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=10000")
             cursor.close()
 
         return engine

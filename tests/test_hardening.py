@@ -130,3 +130,38 @@ def test_concurrent_receive_stock():
         final = db.query(Product).filter_by(id=product_id).first()
         assert final.stock_quantity == 12
 
+
+def test_concurrent_adjust_stock():
+    """Verify concurrent positive and negative stock adjustments compute exact final balance."""
+    import app.db.database as db_mod
+    db_mod.init_db()
+    with db_mod.SessionLocal() as db:
+        product = _create_test_product(db)
+        product.stock_quantity = Decimal("10.00")
+        db.commit()
+        product_id = product.id
+
+    def worker(change, reason):
+        for _ in range(5):
+            try:
+                with db_mod.SessionLocal() as db:
+                    adjust_stock(db, product_id, quantity_change=change, reason=reason)
+                break
+            except Exception:
+                import time
+                time.sleep(0.2)
+
+    import threading
+    t1 = threading.Thread(target=worker, args=(Decimal("15.00"), "Received shipment"))
+    t2 = threading.Thread(target=worker, args=(Decimal("-3.00"), "Damaged goods"))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    with db_mod.SessionLocal() as db:
+        final = db.query(Product).filter_by(id=product_id).first()
+        # Initial 10 + 15 - 3 = 22
+        assert final.stock_quantity == Decimal("22.00")
+
+

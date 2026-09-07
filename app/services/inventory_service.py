@@ -182,8 +182,9 @@ def receive_stock(
 
         product.cost_price = cost_dec
         product.mrp = mrp_dec
-        product.stock_quantity = product.stock_quantity + qty_dec
+        product.stock_quantity = Product.stock_quantity + qty_dec
         db.flush()
+        db.refresh(product)
 
         movement = StockMovement(
             store_id=store_id,
@@ -201,6 +202,7 @@ def receive_stock(
         return dto
     except Exception:
         db.rollback()
+        db.expire_all()
         raise
 
 
@@ -239,14 +241,16 @@ def adjust_stock(
                 requested_change=str(change_dec),
             )
 
-        product.stock_quantity = new_stock
+        product.stock_quantity = Product.stock_quantity + change_dec
+        db.flush()
+        db.refresh(product)
 
         movement = StockMovement(
             store_id=store_id,
             product_id=product.id,
             movement_type="ADJUSTMENT",
             quantity=change_dec,
-            stock_after=new_stock,
+            stock_after=product.stock_quantity,
             reference_id=reference,
             notes=reason.strip(),
         )
@@ -257,6 +261,7 @@ def adjust_stock(
         return dto
     except Exception:
         db.rollback()
+        db.expire_all()
         raise
 
 

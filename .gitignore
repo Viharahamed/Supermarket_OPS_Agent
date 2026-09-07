@@ -3,23 +3,35 @@
 *.env
 !.env.example
 
+# AI Agent Framework & Workspaces
+.agents/
+scratch/
+.gemini/
+
+# Project Planning & Temporary Notes
+implementation_plan.md
+walkthrough.md
+
 # Virtual Environment
 venv/
 env/
 ENV/
 .venv/
 
-# Database & Storage
+# Database & Generated Document Storage
 data/
+generated/
 *.db
 *.sqlite
 *.sqlite3
 
-# Python Caches & Bytecode
+# Python Caches & Testing Artifacts
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 

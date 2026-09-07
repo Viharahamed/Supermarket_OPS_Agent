@@ -165,3 +165,31 @@ def test_concurrent_adjust_stock():
         assert final.stock_quantity == Decimal("22.00")
 
 
+def test_thread_local_sessions_and_connection_isolation():
+    """Verify that concurrent worker threads acquire independent, thread-isolated sessions."""
+    import threading
+    import app.db.database as db_mod
+
+    sessions = []
+    connection_ids = []
+    lock = threading.Lock()
+
+    def worker():
+        with db_mod.SessionLocal() as db:
+            raw_conn = db.connection().connection
+            with lock:
+                sessions.append(db)
+                connection_ids.append(id(raw_conn))
+
+    t1 = threading.Thread(target=worker)
+    t2 = threading.Thread(target=worker)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert len(sessions) == 2
+    assert sessions[0] is not sessions[1]
+    # Connections acquired across independent concurrent threads must be distinct handles
+    assert len(connection_ids) == 2
+    assert connection_ids[0] != connection_ids[1]

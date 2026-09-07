@@ -410,5 +410,32 @@ def test_agent_grounded_product_resolution_and_draft_creation(db_session):
     assert st_maggi.stock_quantity == Decimal("60.00")
 
 
+def test_agent_system_prompt_schema_and_constraints():
+    """Verify system prompt tool formatting and explicit action constraints.
+
+    Verifies:
+    1. Agent._build_system_prompt() uses 'tool_name' as the schema key in AVAILABLE TOOLS.
+    2. System prompt explicitly constrains action_type to 'tool_call', 'final_response', and 'clarification'.
+    3. System prompt explicitly forbids inventing custom action_types or tool names.
+    """
+    mock_llm = MagicMock()
+    agent = Agent(llm_client=mock_llm)
+    prompt = agent._build_system_prompt()
+
+    # 1. Exposes tools using "tool_name", not "name"
+    assert '"tool_name": "search_products"' in prompt
+    assert '"tool_name": "add_bill_items"' in prompt
+
+    # 2. Explicitly constrains action_type to allowed values
+    assert '"tool_call"' in prompt
+    assert '"final_response"' in prompt
+    assert '"clarification"' in prompt
+    assert 'NEVER invent action_type values' in prompt
+
+    # 3. Requires exact registered tool names
+    assert '`tool_name` MUST strictly match an exact registered tool name' in prompt
+
+
+
 
 

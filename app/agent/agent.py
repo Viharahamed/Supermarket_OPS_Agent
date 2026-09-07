@@ -74,7 +74,7 @@ class Agent:
                     params[k] = f"{param_type} (optional)"
 
             compact_tools.append({
-                "name": t["name"],
+                "tool_name": t["name"],
                 "description": t["description"],
                 "arguments": params,
             })

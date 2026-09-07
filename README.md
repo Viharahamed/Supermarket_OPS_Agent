@@ -212,30 +212,18 @@ The application supports both **SQLite** for local development/testing and **Pos
 
 ---
 
-## 🔄 Database Migrations (Phase 13A.4)
+## 🗄️ Database Initialization (Phase 13A.4)
 
-Database schema evolution is managed via **Alembic**.
+Database schema initialization is explicitly managed via `Base.metadata.create_all()` through `scripts/init_db.py`.
 
-### Migration Commands
-- **Upgrade Database Schema to Latest Revision**:
+### Initialization Commands
+- **Initialize Database Schema (PostgreSQL or SQLite)**:
   ```bash
-  alembic upgrade head
-  ```
-- **Check Current Migration Revision**:
-  ```bash
-  alembic current
-  ```
-- **View Migration History**:
-  ```bash
-  alembic history
-  ```
-- **Downgrade Schema (Development/Testing only)**:
-  ```bash
-  alembic downgrade base
+  python scripts/init_db.py
   ```
 
 > [!NOTE]
-> Alembic dynamically sources `DATABASE_URL` from `app.config.get_settings().database_url` (or `POSTGRES_TEST_URL` during testing). Never hardcode credentials in `alembic.ini`.
+> `init_db.py` dynamically sources `DATABASE_URL` from `app.config.get_settings().database_url` (or `POSTGRES_TEST_URL` during testing). Database initialization is an explicit operation and is not automatically executed on application startup.
 
 ---
 
@@ -444,9 +432,10 @@ The Kirana AI Agent supports both local polling for development and secure HTTPS
    - Add Railway Volume mounted to `/app/data/generated` and set `LOCAL_DOCUMENT_DIR=/app/data/generated`.
 2. **Configure Production Environment Variables**:
    - Set `APP_ENV=production`, `DEBUG=false`, `TELEGRAM_MODE=webhook`, `TELEGRAM_WEBHOOK_SECRET`, `PUBLIC_BASE_URL`.
-3. **Execute Alembic Database Migrations**:
+3. **Initialize Database Tables**:
+   Run the explicit initialization script in the Railway Web Console:
    ```bash
-   railway run alembic upgrade head
+   python scripts/init_db.py
    ```
 4. **Register Telegram Webhook**:
    Run the controlled registration setup script:

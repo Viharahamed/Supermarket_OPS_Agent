@@ -29,5 +29,4 @@ def main():
         print(f"Ollama Error/Status: {health.get('error') or health.get('code')}")
 
 if __name__ == "__main__":
-    init_db()
     main()

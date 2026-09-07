@@ -1,6 +1,6 @@
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
-from sqlalchemy import or_
+from sqlalchemy import update, or_
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, StockMovement
@@ -182,9 +182,7 @@ def receive_stock(
 
         product.cost_price = cost_dec
         product.mrp = mrp_dec
-        product.stock_quantity = Product.stock_quantity + qty_dec
-        db.flush()
-        db.refresh(product)
+        product.stock_quantity = product.stock_quantity + qty_dec
 
         movement = StockMovement(
             store_id=store_id,
@@ -241,16 +239,14 @@ def adjust_stock(
                 requested_change=str(change_dec),
             )
 
-        product.stock_quantity = Product.stock_quantity + change_dec
-        db.flush()
-        db.refresh(product)
+        product.stock_quantity = new_stock
 
         movement = StockMovement(
             store_id=store_id,
             product_id=product.id,
             movement_type="ADJUSTMENT",
             quantity=change_dec,
-            stock_after=product.stock_quantity,
+            stock_after=new_stock,
             reference_id=reference,
             notes=reason.strip(),
         )

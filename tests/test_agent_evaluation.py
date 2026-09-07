@@ -162,7 +162,8 @@ def test_agent_multi_turn_react_loop_execution():
 
     assert response.content == "Amul Butter 500g is currently in stock with 15 units available."
     assert response.metadata["iterations"] == 2
-    mock_registry.execute.assert_called_once_with("search_products", {"query": "Amul Butter"})
+    mock_registry.execute.assert_called_once_with("search_products", {"query": "Amul Butter"}, context=None)
+
 
 
 # -----------------------------------------------------------------------------
@@ -258,10 +259,14 @@ def test_agent_end_to_end_real_db_tool_execution():
     unique_sku = f"MAGGI-{uuid.uuid4().hex[:8].upper()}"
     
     with get_db_context() as db:
+        from app.auth.service import get_or_create_default_store
+        get_or_create_default_store(db)
+
         # Seed test product directly into database with unique SKU
         prod = Product(
             sku=unique_sku,
             name="Agent Eval Maggi 70g",
+
             brand="Maggi",
             category="Noodles",
             unit="pack",

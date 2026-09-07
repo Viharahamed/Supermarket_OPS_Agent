@@ -2,10 +2,10 @@
 """Tool handlers for billing-related actions.
 
 Each function accepts the validated Pydantic input model from
-``app.tools.schemas`` and calls the corresponding billing service function.
-Results are returned as plain dicts (the registry wraps them in ToolResult).
+``app.tools.schemas`` and optional trusted execution context.
 """
 
+from typing import Any, Optional
 import uuid
 
 from app.services.billing_service import (
@@ -29,48 +29,62 @@ from app.tools.schemas import (
 )
 
 
-def create_draft_bill(inp: CreateDraftBillInput) -> dict:
+def _extract_store_id(context: Optional[Any]) -> int:
+    if context and hasattr(context, "principal") and context.principal:
+        return context.principal.store_id
+    return 1
+
+
+def create_draft_bill(inp: CreateDraftBillInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     idem_key = inp.idempotency_key or f"draft_{uuid.uuid4().hex}"
     with get_db_context() as db:
         result = svc_create_draft_bill(
             db,
             customer_id=inp.customer_id,
+            store_id=store_id,
             idempotency_key=idem_key,
         )
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def get_current_bill(inp: GetCurrentBillInput) -> dict:
+def get_current_bill(inp: GetCurrentBillInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        result = svc_get_current_bill(db, inp.bill_id)
+        result = svc_get_current_bill(db, inp.bill_id, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def add_bill_item(inp: AddBillItemInput) -> dict:
+def add_bill_item(inp: AddBillItemInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        result = svc_add_bill_item(db, inp.bill_id, inp.product_id, inp.quantity)
+        result = svc_add_bill_item(db, inp.bill_id, inp.product_id, inp.quantity, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def update_bill_item(inp: UpdateBillItemInput) -> dict:
+def update_bill_item(inp: UpdateBillItemInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        result = svc_update_bill_item(db, inp.bill_id, inp.item_id, inp.quantity)
+        result = svc_update_bill_item(db, inp.bill_id, inp.item_id, inp.quantity, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def remove_bill_item(inp: RemoveBillItemInput) -> dict:
+def remove_bill_item(inp: RemoveBillItemInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        result = svc_remove_bill_item(db, inp.bill_id, inp.item_id)
+        result = svc_remove_bill_item(db, inp.bill_id, inp.item_id, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def calculate_bill(inp: CalculateBillInput) -> dict:
+def calculate_bill(inp: CalculateBillInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        result = svc_calculate_bill(db, inp.bill_id)
+        result = svc_calculate_bill(db, inp.bill_id, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 
-def finalize_bill(inp: FinalizeBillInput) -> dict:
+def finalize_bill(inp: FinalizeBillInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     idem_key = inp.idempotency_key or f"final_{inp.bill_id}_{uuid.uuid4().hex}"
     with get_db_context() as db:
         result = svc_finalize_bill(
@@ -79,5 +93,6 @@ def finalize_bill(inp: FinalizeBillInput) -> dict:
             payment_method=inp.payment_method,
             payment_amount=inp.payment_amount,
             idempotency_key=idem_key,
+            store_id=store_id,
         )
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)

@@ -62,8 +62,9 @@ def generate_sales_analysis_pptx(
     db: Session = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    store_id: int = 1,
 ) -> dict:
-    """Generate an 8-slide PowerPoint Sales Analysis presentation."""
+    """Generate an 8-slide PowerPoint Sales Analysis presentation for store_id."""
     start_date_str = start_date_str or start_date
     end_date_str = end_date_str or end_date
     settings = get_settings()
@@ -90,23 +91,22 @@ def generate_sales_analysis_pptx(
 
     if db is None:
         with get_db_context() as session:
-            return _generate_pptx_impl(session, start_d, end_d)
-    return _generate_pptx_impl(db, start_d, end_d)
+            return _generate_pptx_impl(session, start_d, end_d, store_id=store_id)
+    return _generate_pptx_impl(db, start_d, end_d, store_id=store_id)
 
 
-def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
+def _generate_pptx_impl(db: Session, start_d: date, end_d: date, store_id: int = 1) -> dict:
     # 1. Retrieve Store Profile
-    store = db.query(Store).filter(Store.id == 1).first()
+    store = db.query(Store).filter(Store.id == store_id).first()
     store_name = store.name if store else "Lakshmi Kirana & General Store"
 
-    # 2. Retrieve Deterministic Reporting Data
-    # inclusive start, exclusive end (end_d + 1 day)
+    # 2. Retrieve Deterministic Reporting Data scoped to store_id
     exclusive_end_d = end_d + timedelta(days=1)
 
-    summary_report = reporting_service.get_sales_summary(start_d, exclusive_end_d)
-    payment_report = reporting_service.get_payment_breakdown(start_d, exclusive_end_d)
-    top_products_list = reporting_service.get_top_products(start_d, exclusive_end_d, limit=5, by="revenue")
-    low_stock_items = inventory_service.get_low_stock(db)
+    summary_report = reporting_service.get_sales_summary(start_d, exclusive_end_d, store_id=store_id)
+    payment_report = reporting_service.get_payment_breakdown(start_d, exclusive_end_d, store_id=store_id)
+    top_products_list = reporting_service.get_top_products(start_d, exclusive_end_d, limit=5, by="revenue", store_id=store_id)
+    low_stock_items = inventory_service.get_low_stock(db, store_id=store_id)
 
     # 3. Generate Daily Sales Trend Data Points
     daily_sales_data = []
@@ -424,7 +424,7 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
 
     # 7. Store binary presentation using DocumentStorage abstraction
     file_name = f"sales_analysis_{start_d.isoformat()}_{end_d.isoformat()}.pptx"
-    relative_path = f"reports/{file_name}"
+    relative_path = f"stores/{store_id}/reports/{file_name}"
 
     try:
         storage = get_storage()

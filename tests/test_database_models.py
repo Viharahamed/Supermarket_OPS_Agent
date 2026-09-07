@@ -24,7 +24,9 @@ def db_session():
     Base.metadata.create_all(bind=engine)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
+    from app.auth.service import get_or_create_default_store
     try:
+        get_or_create_default_store(session)
         yield session
     finally:
         session.close()
@@ -32,10 +34,11 @@ def db_session():
 
 
 def test_init_db_creates_all_tables(db_session):
-    """Verify that all 9 domain models map to database tables."""
+    """Verify that all domain models map to database tables."""
     table_names = Base.metadata.tables.keys()
     expected_tables = {
         "stores",
+        "users",
         "products",
         "stock_movements",
         "customers",
@@ -46,6 +49,7 @@ def test_init_db_creates_all_tables(db_session):
         "agent_sessions",
     }
     assert expected_tables.issubset(set(table_names))
+
 
 
 def test_product_crud_and_decimal_precision(db_session):

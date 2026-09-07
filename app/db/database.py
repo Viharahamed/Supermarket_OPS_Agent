@@ -29,11 +29,16 @@ def _configure_engine(db_url_or_settings: str | Settings | None = None) -> Engin
         url = url.replace("postgresql://", "postgresql+psycopg://", 1)
 
     if url.startswith("sqlite"):
+        connect_args = {"check_same_thread": False}
+        if "uri=true" in url.lower() or "mode=memory" in url.lower() or "cache=shared" in url.lower():
+            connect_args["uri"] = True
+
         engine = create_engine(
             url,
-            connect_args={"check_same_thread": False},
+            connect_args=connect_args,
             echo=False,
         )
+
 
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
@@ -43,6 +48,7 @@ def _configure_engine(db_url_or_settings: str | Settings | None = None) -> Engin
             cursor.close()
 
         return engine
+
 
     # PostgreSQL or other relational database dialects
     return create_engine(

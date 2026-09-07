@@ -82,7 +82,8 @@ def test_agent_run_multi_step_tool_execution():
 
     assert response.content == "Found Amul Taaza Milk in inventory."
     assert response.metadata["iterations"] == 2
-    mock_registry.execute.assert_called_once_with("search_products", {"query": "Milk"})
+    mock_registry.execute.assert_called_once_with("search_products", {"query": "Milk"}, context=None)
+
 
 
 def test_agent_run_iteration_cap():

@@ -54,29 +54,22 @@ def _get_invoices_dir() -> Path:
 def generate_invoice_pdf(
     bill_id_or_number: int | str,
     db: Session = None,
+    store_id: int = 1,
 ) -> dict:
-    """Generate a clean, professional GST Tax Invoice PDF for a finalized bill.
-
-    Args:
-        bill_id_or_number: Integer Bill ID or String Bill Number (e.g. 1001 or "BILL-20260906-XXXX")
-        db: Optional SQLAlchemy Session. If None, uses get_db_context().
-
-    Returns:
-        dict containing file_path, file_name, bill_id, bill_number, and grand_total.
-    """
+    """Generate a clean, professional GST Tax Invoice PDF for a finalized bill in store_id."""
     if db is None:
         with get_db_context() as session:
-            return _generate_invoice_pdf_impl(session, bill_id_or_number)
-    return _generate_invoice_pdf_impl(db, bill_id_or_number)
+            return _generate_invoice_pdf_impl(session, bill_id_or_number, store_id=store_id)
+    return _generate_invoice_pdf_impl(db, bill_id_or_number, store_id=store_id)
 
 
-def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
-    # 1. Fetch Bill entity from DB
+def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str, store_id: int = 1) -> dict:
+    # 1. Fetch Bill entity from DB scoped to store_id
     if isinstance(bill_identifier, int) or (isinstance(bill_identifier, str) and bill_identifier.isdigit()):
         b_id = int(bill_identifier)
-        bill = db.query(Bill).filter(Bill.id == b_id).first()
+        bill = db.query(Bill).filter(Bill.id == b_id, Bill.store_id == store_id).first()
     else:
-        bill = db.query(Bill).filter(Bill.bill_number == str(bill_identifier)).first()
+        bill = db.query(Bill).filter(Bill.bill_number == str(bill_identifier), Bill.store_id == store_id).first()
 
     if not bill:
         b_id_int = int(bill_identifier) if str(bill_identifier).isdigit() else 0
@@ -85,18 +78,21 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
     if bill.status != "FINALIZED":
         raise BillNotFinalizedError(bill.id, bill.status)
 
-    # 2. Fetch Store Profile & Preferences
-    store = db.query(Store).filter(Store.id == 1).first()
+    # 2. Fetch Store Profile & Preferences for store_id
+    store = db.query(Store).filter(Store.id == store_id).first()
     store_name = store.name if store else "Lakshmi Kirana & General Store"
     store_address = store.address if store else "Shop #4, Main Market, MG Road, Bengaluru"
     store_gstin = store.gstin if store else "29ABCDE1234F1Z5"
 
-    footer_pref = db.query(OwnerPreference).filter(OwnerPreference.key == "receipt_footer").first()
+    footer_pref = db.query(OwnerPreference).filter(
+        OwnerPreference.store_id == store_id,
+        OwnerPreference.key == "receipt_footer",
+    ).first()
     receipt_footer = footer_pref.value if footer_pref else "Thank you for shopping with us! Visit again."
 
     # 3. Build safe relative storage filename and BytesIO memory buffer
     safe_bill_num = _sanitize_filename(bill.bill_number or bill.id)
-    relative_path = f"invoices/invoice_{safe_bill_num}.pdf"
+    relative_path = f"stores/{store_id}/invoices/invoice_{safe_bill_num}.pdf"
 
     import io
     from app.storage import get_storage

@@ -34,6 +34,10 @@ def db_session():
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     session = TestingSessionLocal()
 
+    from app.auth.service import get_or_create_default_store
+    get_or_create_default_store(session)
+
+
     # Seed sample products
     p1 = Product(
         sku="SUGR-FINE-1K",

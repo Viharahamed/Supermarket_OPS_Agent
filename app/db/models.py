@@ -27,6 +27,26 @@ class Store(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
+    users: Mapped[List["User"]] = relationship("User", back_populates="store", cascade="all, delete-orphan")
+    products: Mapped[List["Product"]] = relationship("Product", back_populates="store", cascade="all, delete-orphan")
+    bills: Mapped[List["Bill"]] = relationship("Bill", back_populates="store", cascade="all, delete-orphan")
+    customers: Mapped[List["Customer"]] = relationship("Customer", back_populates="store", cascade="all, delete-orphan")
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True)
+    telegram_user_id: Mapped[Optional[int]] = mapped_column(Integer, unique=True, index=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="OPERATOR", nullable=False)  # OWNER, OPERATOR
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    store: Mapped["Store"] = relationship("Store", back_populates="users")
+
 
 class Product(Base):
     __tablename__ = "products"
@@ -35,7 +55,8 @@ class Product(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sku: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True, default=1)
+    sku: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
     brand: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -53,6 +74,7 @@ class Product(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
+    store: Mapped["Store"] = relationship("Store", back_populates="products")
     stock_movements: Mapped[List["StockMovement"]] = relationship(
         "StockMovement", back_populates="product", cascade="all, delete-orphan"
     )
@@ -63,6 +85,7 @@ class StockMovement(Base):
     __tablename__ = "stock_movements"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True, default=1)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), nullable=False, index=True)
     movement_type: Mapped[str] = mapped_column(String(50), nullable=False)  # ADDITION, SALE, ADJUSTMENT, RETURN
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 2, asdecimal=True), nullable=False)
@@ -78,12 +101,14 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True, default=1)
     name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
-    phone: Mapped[Optional[str]] = mapped_column(String(20), unique=True, index=True, nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(20), index=True, nullable=True)
     khata_balance: Mapped[Decimal] = mapped_column(Numeric(10, 2, asdecimal=True), default=Decimal("0.00"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
+    store: Mapped["Store"] = relationship("Store", back_populates="customers")
     bills: Mapped[List["Bill"]] = relationship("Bill", back_populates="customer")
     khata_transactions: Mapped[List["KhataTransaction"]] = relationship(
         "KhataTransaction", back_populates="customer", cascade="all, delete-orphan"
@@ -94,8 +119,9 @@ class Bill(Base):
     __tablename__ = "bills"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    bill_number: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
-    idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), unique=True, index=True, nullable=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True, default=1)
+    bill_number: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="DRAFT", index=True)  # DRAFT, FINALIZED, CANCELLED
     customer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("customers.id"), nullable=True, index=True)
     payment_method: Mapped[str] = mapped_column(String(50), default="PENDING")  # CASH, UPI, KHATA, SPLIT, PENDING
@@ -111,6 +137,7 @@ class Bill(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
+    store: Mapped["Store"] = relationship("Store", back_populates="bills")
     customer: Mapped[Optional["Customer"]] = relationship("Customer", back_populates="bills")
     items: Mapped[List["BillItem"]] = relationship("BillItem", back_populates="bill", cascade="all, delete-orphan")
     khata_transactions: Mapped[List["KhataTransaction"]] = relationship("KhataTransaction", back_populates="bill")
@@ -144,12 +171,13 @@ class KhataTransaction(Base):
     __tablename__ = "khata_transactions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), nullable=False, index=True, default=1)
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), nullable=False, index=True)
     bill_id: Mapped[Optional[int]] = mapped_column(ForeignKey("bills.id"), nullable=True, index=True)
     transaction_type: Mapped[str] = mapped_column(String(50), nullable=False)  # CREDIT_SALE, PAYMENT, ADJUSTMENT
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2, asdecimal=True), nullable=False)
     balance_after: Mapped[Decimal] = mapped_column(Numeric(10, 2, asdecimal=True), nullable=False)
-    idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), unique=True, index=True, nullable=True)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -160,6 +188,7 @@ class KhataTransaction(Base):
 class OwnerPreference(Base):
     __tablename__ = "owner_preferences"
 
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True, default=1)
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -168,6 +197,7 @@ class OwnerPreference(Base):
 class AgentSession(Base):
     __tablename__ = "agent_sessions"
 
+    store_id: Mapped[int] = mapped_column(ForeignKey("stores.id"), primary_key=True, default=1)
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     history_json: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)

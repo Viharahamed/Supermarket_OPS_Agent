@@ -17,6 +17,8 @@ from app.exceptions import IdempotencyConflictError, DatabaseLockedError
 
 # Helper to create a temporary product for tests
 def _create_test_product(db: Session) -> Product:
+    from app.auth.service import get_or_create_default_store
+    get_or_create_default_store(db)
     product = Product(
         sku=str(uuid.uuid4()),
         name="Test Product",
@@ -68,11 +70,14 @@ def test_retry_on_lock_exhaustion(monkeypatch):
 
 def test_create_draft_idempotent():
     with get_db_context() as db:
+        from app.auth.service import get_or_create_default_store
+        get_or_create_default_store(db)
         key = str(uuid.uuid4())
         draft1 = create_draft_bill(db, idempotency_key=key)
         draft2 = create_draft_bill(db, idempotency_key=key)
         assert draft1.id == draft2.id
         assert draft1.idempotency_key == key
+
 
 
 def test_finalize_idempotent():
@@ -97,13 +102,14 @@ def test_finalize_idempotent():
 # ---------------------------------------------------------------------------
 
 def test_concurrent_receive_stock():
-    init_db()
-    with SessionLocal() as db:
+    import app.db.database as db_mod
+    db_mod.init_db()
+    with db_mod.SessionLocal() as db:
         product = _create_test_product(db)
         product_id = product.id
 
     def worker(qty):
-        with SessionLocal() as db:
+        with db_mod.SessionLocal() as db:
             receive_stock(db, product_id, quantity=qty, cost_price=Decimal("9.00"), mrp=Decimal("14.00"))
 
     import threading
@@ -114,6 +120,7 @@ def test_concurrent_receive_stock():
     t1.join()
     t2.join()
 
-    with SessionLocal() as db:
+    with db_mod.SessionLocal() as db:
         final = db.query(Product).filter_by(id=product_id).first()
         assert final.stock_quantity == 12
+

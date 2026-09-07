@@ -91,17 +91,17 @@ def stock_movement_to_dto(movement: StockMovement) -> StockMovementDTO:
 def search_products(
     db: Session,
     query: str,
+    store_id: int = 1,
     include_inactive: bool = False
 ) -> List[ProductDTO]:
-    """
-    Search active products by name, brand, SKU, or category using partial matching.
-    """
+    """Search active products for store_id by name, brand, SKU, or category using partial matching."""
     cleaned_query = query.strip()
     if not cleaned_query:
         return []
 
     pattern = f"%{cleaned_query}%"
     db_query = db.query(Product).filter(
+        Product.store_id == store_id,
         or_(
             Product.name.ilike(pattern),
             Product.brand.ilike(pattern),
@@ -117,24 +117,24 @@ def search_products(
     return [product_to_dto(p) for p in products]
 
 
-def get_stock(db: Session, product_id: int) -> StockStatusDTO:
-    """
-    Fetch product and evaluate its deterministic stock status.
-    """
-    product = db.query(Product).filter(Product.id == product_id).first()
+def get_stock(db: Session, product_id: int, store_id: int = 1) -> StockStatusDTO:
+    """Fetch product for store_id and evaluate its deterministic stock status."""
+    product = db.query(Product).filter(
+        Product.id == product_id,
+        Product.store_id == store_id,
+    ).first()
     if not product:
         raise ProductNotFoundError(product_id)
 
     return product_to_stock_status_dto(product)
 
 
-def get_low_stock(db: Session) -> List[StockStatusDTO]:
-    """
-    Retrieve all active products where stock_quantity <= reorder_level.
-    """
+def get_low_stock(db: Session, store_id: int = 1) -> List[StockStatusDTO]:
+    """Retrieve all active products for store_id where stock_quantity <= reorder_level."""
     products = (
         db.query(Product)
         .filter(
+            Product.store_id == store_id,
             Product.active.is_(True),
             Product.stock_quantity <= Product.reorder_level,
         )
@@ -151,12 +151,11 @@ def receive_stock(
     quantity: Decimal | float | str,
     cost_price: Decimal | float | str,
     mrp: Decimal | float | str,
+    store_id: int = 1,
     reference: Optional[str] = None,
     notes: Optional[str] = None,
 ) -> StockMovementDTO:
-    """
-    Receive stock for an active product, updating cost_price and MRP, logging a STOCK_IN movement.
-    """
+    """Receive stock for an active product in store_id, updating prices and logging a STOCK_IN movement."""
     qty_dec = _to_decimal(quantity, "quantity")
     cost_dec = _to_decimal(cost_price, "cost_price")
     mrp_dec = _to_decimal(mrp, "mrp")
@@ -171,24 +170,23 @@ def receive_stock(
         raise InvalidPriceError(f"Cost price ({cost_dec}) cannot be greater than MRP ({mrp_dec}).")
 
     try:
-        product = db.query(Product).filter(Product.id == product_id).with_for_update().first()
+        product = db.query(Product).filter(
+            Product.id == product_id,
+            Product.store_id == store_id,
+        ).with_for_update().first()
+
         if not product:
             raise ProductNotFoundError(product_id)
         if not product.active:
             raise ProductInactiveError(product_id)
 
-        db.query(Product).filter(Product.id == product_id).update(
-            {
-                Product.cost_price: cost_dec,
-                Product.mrp: mrp_dec,
-                Product.stock_quantity: Product.stock_quantity + qty_dec,
-            },
-            synchronize_session="fetch",
-        )
-        db.refresh(product)
+        product.cost_price = cost_dec
+        product.mrp = mrp_dec
+        product.stock_quantity = product.stock_quantity + qty_dec
+        db.flush()
 
-        # Create movement record
         movement = StockMovement(
+            store_id=store_id,
             product_id=product.id,
             movement_type="STOCK_IN",
             quantity=qty_dec,
@@ -211,11 +209,10 @@ def adjust_stock(
     product_id: int,
     quantity_change: Decimal | float | str,
     reason: str,
+    store_id: int = 1,
     reference: Optional[str] = None,
 ) -> StockMovementDTO:
-    """
-    Perform a controlled stock adjustment (positive or negative) with mandatory audit reason.
-    """
+    """Perform a controlled stock adjustment (positive or negative) for store_id with mandatory reason."""
     if not reason or not reason.strip():
         raise InvalidAdjustmentError("Adjustment reason is required and cannot be empty.")
 
@@ -224,7 +221,11 @@ def adjust_stock(
         raise InvalidQuantityError("Stock adjustment quantity change cannot be zero.")
 
     try:
-        product = db.query(Product).filter(Product.id == product_id).with_for_update().first()
+        product = db.query(Product).filter(
+            Product.id == product_id,
+            Product.store_id == store_id,
+        ).with_for_update().first()
+
         if not product:
             raise ProductNotFoundError(product_id)
         if not product.active:
@@ -240,6 +241,7 @@ def adjust_stock(
         product.stock_quantity = new_stock
 
         movement = StockMovement(
+            store_id=store_id,
             product_id=product.id,
             movement_type="ADJUSTMENT",
             quantity=change_dec,
@@ -260,6 +262,7 @@ def create_product(
     db: Optional[Session] = None,
     name: str = "",
     sku: str = "",
+    store_id: int = 1,
     category: Optional[str] = None,
     brand: Optional[str] = None,
     unit: str = "piece",
@@ -274,9 +277,7 @@ def create_product(
     reorder_level: Decimal | float | str = Decimal("10.00"),
     active: bool = True,
 ) -> Product:
-    """
-    Helper function to create and persist a new Product entity in inventory.
-    """
+    """Helper function to create and persist a new Product entity for store_id."""
     pack_size_dec = _to_decimal(pack_size, "pack_size")
     cost_dec = _to_decimal(cost_price, "cost_price")
     selling_dec = _to_decimal(selling_price, "selling_price")
@@ -289,6 +290,7 @@ def create_product(
 
     def _do_create(session: Session) -> Product:
         product = Product(
+            store_id=store_id,
             name=name,
             sku=sku,
             category=category,
@@ -317,4 +319,3 @@ def create_product(
         from app.db.database import get_db_context
         with get_db_context() as session:
             return _do_create(session)
-

@@ -1,23 +1,44 @@
 # app/tools/preferences.py
-"""Tool handlers for user preferences.
+"""Tool handlers for store owner preferences with store_id context."""
 
-The project currently does not have a dedicated preferences service, so the
-handlers are thin stubs that raise a clear NotImplementedError. This satisfies
-the import requirements while making the missing functionality obvious for
-future development.
-"""
-
+from typing import Any, Optional
+from app.db.database import get_db_context
+from app.db.models import OwnerPreference
 from app.tools.schemas import (
     GetPreferenceInput,
     SetPreferenceInput,
-    GetUserPreferencesInput,
-    UpdateUserPreferencesInput,
 )
 
 
-def get_user_preferences(inp: GetPreferenceInput) -> dict:
-    raise NotImplementedError("User preferences service not yet implemented")
+def _extract_store_id(context: Optional[Any]) -> int:
+    if context and hasattr(context, "principal") and context.principal:
+        return context.principal.store_id
+    return 1
 
 
-def update_user_preferences(inp: SetPreferenceInput) -> dict:
-    raise NotImplementedError("User preferences service not yet implemented")
+def get_user_preferences(inp: GetPreferenceInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
+    with get_db_context() as db:
+        pref = db.query(OwnerPreference).filter(
+            OwnerPreference.store_id == store_id,
+            OwnerPreference.key == inp.key,
+        ).first()
+        if not pref:
+            return {"key": inp.key, "value": None}
+        return {"key": pref.key, "value": pref.value}
+
+
+def update_user_preferences(inp: SetPreferenceInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
+    with get_db_context() as db:
+        pref = db.query(OwnerPreference).filter(
+            OwnerPreference.store_id == store_id,
+            OwnerPreference.key == inp.key,
+        ).first()
+        if not pref:
+            pref = OwnerPreference(store_id=store_id, key=inp.key, value=inp.value)
+            db.add(pref)
+        else:
+            pref.value = inp.value
+        db.commit()
+        return {"key": pref.key, "value": pref.value}

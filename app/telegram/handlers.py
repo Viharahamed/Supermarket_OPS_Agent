@@ -208,17 +208,48 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     user_text = update.message.text.strip()
     user = update.effective_user
-    user_id = user.id if user else None
+    tg_user_id = user.id if user else None
     chat_id = update.effective_chat.id if update.effective_chat else None
 
-    logger.info(f"Incoming Telegram Message from user_id={user_id}, chat_id={chat_id}: '{user_text}'")
+    logger.info(f"Incoming Telegram Message from tg_user_id={tg_user_id}, chat_id={chat_id}: '{user_text}'")
     start_time = time.time()
 
+    # Authenticate Telegram user identity
+    from app.auth import authenticate_telegram_user, bootstrap_store_and_user, ToolExecutionContext
+    from app.db.database import get_db_context
+    from app.db.models import User
+
+    principal = authenticate_telegram_user(tg_user_id) if tg_user_id else None
+
+    if not principal and tg_user_id:
+        # Check if system has 0 users (auto-bootstrap initial Store #1 and User #1 for dev setup)
+        with get_db_context() as db:
+            user_count = db.query(User).count()
+            if user_count == 0:
+                principal = bootstrap_store_and_user(
+                    store_name="Lakshmi Kirana & General Store",
+                    telegram_user_id=tg_user_id,
+                    user_name=user.first_name or "Store Owner",
+                    role="OWNER",
+                    db=db,
+                )
+
+    if not principal:
+        logger.warning(f"Unauthorized Telegram access attempt by tg_user_id={tg_user_id}")
+        await update.message.reply_text(
+            "<b>⚠️ Unauthorized Access</b>\n\n"
+            "You are not registered as an authorized store operator. Access denied.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    exec_context = ToolExecutionContext(principal=principal)
+
     try:
-        # Route query to AI Agent Service Layer
-        agent_response = handle_message(user_text, user_id=user_id)
+        # Route query to AI Agent Service Layer with trusted context
+        agent_response = handle_message(user_text, user_id=principal.user_id, context=exec_context)
         elapsed = time.time() - start_time
-        logger.info(f"Agent processed message in {elapsed:.2f}s for user_id={user_id}")
+        logger.info(f"Agent processed message in {elapsed:.2f}s for store_id={principal.store_id}, user_id={principal.user_id}")
 
         raw_content = agent_response.content or "No response generated."
         formatted_html = format_telegram_html(raw_content)

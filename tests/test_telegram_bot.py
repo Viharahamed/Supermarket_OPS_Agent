@@ -127,6 +127,13 @@ async def test_new_command_resets_session_without_deleting_store_data():
     unique_phone = f"99{uuid.uuid4().hex[:8]}"[:10]
 
     with get_db_context() as db:
+        from app.auth.service import bootstrap_store_and_user
+        principal = bootstrap_store_and_user(
+            store_name="Lakshmi Kirana & General Store",
+            telegram_user_id=test_user_id,
+            user_name="Telegram User",
+            db=db,
+        )
         # Seed test catalog product, customer, and session history
         prod = Product(
             sku=unique_sku,
@@ -136,14 +143,25 @@ async def test_new_command_resets_session_without_deleting_store_data():
             mrp=Decimal("14.00"),
             stock_quantity=Decimal("50.00"),
             active=True,
+            store_id=principal.store_id,
         )
-        cust = Customer(name="Telegram Customer", phone=unique_phone, khata_balance=Decimal("200.00"))
-        session = AgentSession(user_id=test_user_id, history_json='[{"role": "user", "content": "hi"}]')
+        cust = Customer(
+            name="Telegram Customer",
+            phone=unique_phone,
+            khata_balance=Decimal("200.00"),
+            store_id=principal.store_id,
+        )
+        session = AgentSession(
+            store_id=principal.store_id,
+            user_id=principal.user_id,
+            history_json='[{"role": "user", "content": "hi"}]',
+        )
         
         db.add_all([prod, cust, session])
         db.commit()
         prod_id = prod.id
         cust_id = cust.id
+
 
     # Execute /new command
     update = MagicMock()
@@ -193,8 +211,12 @@ async def test_text_message_handler_routing():
 
         await text_message_handler(update, context)
 
-        mock_handle.assert_called_once_with("How much Maggi is left?", user_id=12345)
+        mock_handle.assert_called_once()
+        args, kwargs = mock_handle.call_args
+        assert args[0] == "How much Maggi is left?"
+        assert kwargs["context"].principal.telegram_user_id == 12345
         update.message.reply_text.assert_called_once()
+
         assert "120 packs of Maggi" in update.message.reply_text.call_args[0][0]
 
 

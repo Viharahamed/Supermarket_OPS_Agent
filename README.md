@@ -377,6 +377,28 @@ Storage configuration is managed via `app/config.py`:
 - **Database vs. Storage Separation**: PostgreSQL stores authoritative business data (bills, items, inventory). Binary files are stored exclusively in document storage.
 - **Future Object Storage**: S3/GCS object storage backends can be added behind the `DocumentStorage` interface without modifying generators, tools, or Telegram handlers.
 
+---
+
+## 🔐 Authentication & Multi-Tenancy (Phase 14)
+
+The Kirana AI Agent supports production-grade multi-tenancy and store isolation. Multiple retail stores and users operate on a single shared platform with guaranteed data isolation.
+
+### 🔑 Security Principles & Tenant Isolation
+1. **Single Canonical Tenant Identifier**: `store_id` (foreign key to `stores.id`).
+2. **Untrusted LLM Arguments**: `store_id` is NEVER accepted or trusted from LLM function call arguments. It is strictly injected from the application's authenticated execution context (`AuthenticatedPrincipal`).
+3. **Database-Level Isolation**: All business domain tables (`products`, `stock_movements`, `customers`, `bills`, `khata_transactions`, `owner_preferences`, `agent_sessions`) feature mandatory `store_id` foreign keys and store-scoped database indexes.
+4. **Isolated Document Artifacts**: PDFs and PPTX files are partitioned into store-isolated directories (`stores/<store_id>/invoices/` and `stores/<store_id>/reports/`).
+5. **Session Isolation**: Chat session histories are composite-keyed by `(store_id, user_id)` so Store A can never access Store B's agent interactions.
+
+### 👤 Identity & Roles
+- **Identity Provider**: Users authenticate via Telegram User ID mapping to database `users` records.
+- **Roles**:
+  - `OWNER`: Full store management rights (inventory, billing, reporting, preferences).
+  - `OPERATOR`: Store operational rights (billing, inventory lookups, customer Khata).
+- **Auto-Bootstrapping**: Fresh database installations auto-bootstrap Store #1 and User #1 upon first execution to maintain single-store developer convenience.
+- **Unauthorized Access**: Unregistered Telegram user IDs are rejected with clean warning responses.
+
+
 
 
 

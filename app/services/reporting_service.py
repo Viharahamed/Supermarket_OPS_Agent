@@ -22,11 +22,9 @@ from app.exceptions import (
 # Configuration
 # ---------------------------------------------------------------------------
 _STORE_TZ = os.getenv("STORE_TZ", "Asia/Kolkata")
-# Attempt to load the store timezone. If the IANA tz database (tzdata) is unavailable,
-# fall back to UTC using the built‑in datetime.timezone.
 try:
     _STORE_ZONE = ZoneInfo(_STORE_TZ)
-except Exception:  # ZoneInfoNotFoundError or missing tzdata
+except Exception:
     from datetime import timezone
     _STORE_ZONE = timezone.utc
 
@@ -34,11 +32,11 @@ except Exception:  # ZoneInfoNotFoundError or missing tzdata
 # Helper utilities
 # ---------------------------------------------------------------------------
 def _local_midnight(d: date) -> datetime:
-    """Return a timezone‑aware datetime at 00:00 of the given date in the store timezone."""
+    """Return a timezone-aware datetime at 00:00 of the given date in the store timezone."""
     return datetime.combine(d, time.min).replace(tzinfo=_STORE_ZONE)
 
 def _to_utc(dt: datetime) -> datetime:
-    """Convert a store‑timezone aware datetime to UTC for DB querying."""
+    """Convert a store-timezone aware datetime to UTC for DB querying."""
     return dt.astimezone(ZoneInfo("UTC"))
 
 def _get_period_bounds(
@@ -47,13 +45,7 @@ def _get_period_bounds(
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
 ) -> Tuple[datetime, datetime]:
-    """Return (start_utc, end_utc) for the requested period.
-
-    - If *date_* is supplied, the period is that whole day.
-    - If *start*/*end* are supplied, they are interpreted as store‑timezone
-      datetimes and converted to UTC.
-    - If nothing is supplied, defaults to *today*.
-    """
+    """Return (start_utc, end_utc) for the requested period."""
     if date_ is not None:
         if start is not None or end is not None:
             raise InvalidDateError("Provide either a date or explicit start/end, not both.")
@@ -63,13 +55,12 @@ def _get_period_bounds(
         if not (isinstance(start, datetime) and isinstance(end, datetime)):
             raise InvalidDateError("Start and end must be datetime objects.")
         if start.tzinfo is None or end.tzinfo is None:
-            raise InvalidDateError("Start and end must be timezone‑aware.")
+            raise InvalidDateError("Start and end must be timezone-aware.")
         if start >= end:
             raise InvalidDateRangeError("Start must be before end.")
         start_dt = start
         end_dt = end
     elif start is None and end is None:
-        # Default to today
         today = datetime.now(_STORE_ZONE).date()
         start_dt = _local_midnight(today)
         end_dt = start_dt + timedelta(days=1)
@@ -81,8 +72,8 @@ def _get_period_bounds(
 # ---------------------------------------------------------------------------
 # Reporting functions
 # ---------------------------------------------------------------------------
-def get_daily_sales(report_date: date) -> schemas.DailySalesReport:
-    """Return sales totals for a single day (store timezone)."""
+def get_daily_sales(report_date: date, store_id: int = 1) -> schemas.DailySalesReport:
+    """Return sales totals for a single day for store_id."""
     start_utc, end_utc = _get_period_bounds(date_=report_date)
     with get_db_context() as db:
         stmt = (
@@ -96,6 +87,7 @@ def get_daily_sales(report_date: date) -> schemas.DailySalesReport:
                 func.coalesce(func.sum(models.Bill.rounding_amount), Decimal('0')),
                 func.coalesce(func.sum(models.Bill.grand_total), Decimal('0')),
             )
+            .where(models.Bill.store_id == store_id)
             .where(models.Bill.status == "FINALIZED")
             .where(models.Bill.created_at >= start_utc)
             .where(models.Bill.created_at < end_utc)
@@ -125,8 +117,8 @@ def get_daily_sales(report_date: date) -> schemas.DailySalesReport:
             grand_total=grand_total,
         )
 
-def get_sales_summary(start_date: date, end_date: date) -> schemas.SalesSummaryReport:
-    """Aggregate sales information for the inclusive start / exclusive end range."""
+def get_sales_summary(start_date: date, end_date: date, store_id: int = 1) -> schemas.SalesSummaryReport:
+    """Aggregate sales information for store_id."""
     start_utc, end_utc = _get_period_bounds(
         start=_local_midnight(start_date), end=_local_midnight(end_date)
     )
@@ -143,6 +135,7 @@ def get_sales_summary(start_date: date, end_date: date) -> schemas.SalesSummaryR
                 func.max(models.Bill.grand_total),
                 func.min(models.Bill.grand_total),
             )
+            .where(models.Bill.store_id == store_id)
             .where(models.Bill.status == "FINALIZED")
             .where(models.Bill.created_at >= start_utc)
             .where(models.Bill.created_at < end_utc)
@@ -174,8 +167,8 @@ def get_sales_summary(start_date: date, end_date: date) -> schemas.SalesSummaryR
             lowest_bill_value=lowest_bill_value or Decimal('0'),
         )
 
-def get_payment_breakdown(start_date: date, end_date: date) -> schemas.PaymentBreakdownReport:
-    """Return payment totals per method for a period."""
+def get_payment_breakdown(start_date: date, end_date: date, store_id: int = 1) -> schemas.PaymentBreakdownReport:
+    """Return payment totals per method for store_id."""
     start_utc, end_utc = _get_period_bounds(
         start=_local_midnight(start_date), end=_local_midnight(end_date)
     )
@@ -185,6 +178,7 @@ def get_payment_breakdown(start_date: date, end_date: date) -> schemas.PaymentBr
                 models.Bill.payment_method,
                 func.coalesce(func.sum(models.Bill.grand_total), Decimal('0')),
             )
+            .where(models.Bill.store_id == store_id)
             .where(models.Bill.status == "FINALIZED")
             .where(models.Bill.created_at >= start_utc)
             .where(models.Bill.created_at < end_utc)
@@ -195,7 +189,7 @@ def get_payment_breakdown(start_date: date, end_date: date) -> schemas.PaymentBr
         total = sum(breakdown.values(), Decimal('0'))
         for method in ["CASH", "UPI", "CARD", "KHATA"]:
             breakdown.setdefault(method, Decimal('0'))
-        summary = get_sales_summary(start_date, end_date)
+        summary = get_sales_summary(start_date, end_date, store_id=store_id)
         inconsistency = (
             f"Payment totals ({total}) do not match sales total ({summary.total_sales})"
             if total != summary.total_sales
@@ -216,6 +210,7 @@ def get_top_products(
     end_date: date,
     limit: int = 10,
     by: Literal["quantity", "revenue"] = "quantity",
+    store_id: int = 1,
 ) -> List[schemas.TopProductDTO]:
     if limit <= 0:
         raise InvalidLimitError("limit must be a positive integer")
@@ -230,6 +225,7 @@ def get_top_products(
                 func.sum(models.BillItem.line_total).label("total_revenue"),
             )
             .join(models.Bill, models.Bill.id == models.BillItem.bill_id)
+            .where(models.Bill.store_id == store_id)
             .where(models.Bill.status == "FINALIZED")
             .where(models.Bill.created_at >= start_utc)
             .where(models.Bill.created_at < end_utc)
@@ -244,6 +240,7 @@ def get_top_products(
                 subq.c.total_revenue,
             )
             .join(subq, models.Product.id == subq.c.product_id)
+            .where(models.Product.store_id == store_id)
             .order_by(order_col.desc())
             .limit(limit)
         )
@@ -260,7 +257,7 @@ def get_top_products(
             )
         return result
 
-def get_gst_summary(start_date: date, end_date: date) -> schemas.GstSummaryReport:
+def get_gst_summary(start_date: date, end_date: date, store_id: int = 1) -> schemas.GstSummaryReport:
     start_utc, end_utc = _get_period_bounds(
         start=_local_midnight(start_date), end=_local_midnight(end_date)
     )
@@ -274,6 +271,7 @@ def get_gst_summary(start_date: date, end_date: date) -> schemas.GstSummaryRepor
                 func.sum(models.BillItem.tax_amount).label("gst_total"),
             )
             .join(models.Bill, models.Bill.id == models.BillItem.bill_id)
+            .where(models.Bill.store_id == store_id)
             .where(models.Bill.status == "FINALIZED")
             .where(models.Bill.created_at >= start_utc)
             .where(models.Bill.created_at < end_utc)
@@ -308,9 +306,9 @@ def get_gst_summary(start_date: date, end_date: date) -> schemas.GstSummaryRepor
             slabs=slabs,
         )
 
-def get_stock_health() -> schemas.StockHealthReport:
+def get_stock_health(store_id: int = 1) -> schemas.StockHealthReport:
     with get_db_context() as db:
-        stmt_all = select(models.Product)
+        stmt_all = select(models.Product).where(models.Product.store_id == store_id)
         products = db.execute(stmt_all).scalars().all()
         in_stock = []
         low_stock = []
@@ -345,15 +343,15 @@ def get_stock_health() -> schemas.StockHealthReport:
             reorder_candidates=reorder,
         )
 
-def daily_close(report_date: date) -> schemas.DailyCloseReport:
-    """Generate a comprehensive daily‑close report (read‑only)."""
-    daily = get_daily_sales(report_date)
+def daily_close(report_date: date, store_id: int = 1) -> schemas.DailyCloseReport:
+    """Generate a comprehensive daily-close report for store_id (read-only)."""
+    daily = get_daily_sales(report_date, store_id=store_id)
     start = report_date
     end = report_date + timedelta(days=1)
-    summary = get_sales_summary(start, end)
-    payments = get_payment_breakdown(start, end)
-    top_products = get_top_products(start, end, limit=5)
-    stock = get_stock_health()
+    summary = get_sales_summary(start, end, store_id=store_id)
+    payments = get_payment_breakdown(start, end, store_id=store_id)
+    top_products = get_top_products(start, end, limit=5, store_id=store_id)
+    stock = get_stock_health(store_id=store_id)
     return schemas.DailyCloseReport(
         period=schemas.Period(start=report_date.isoformat(), end=report_date.isoformat()),
         daily_sales=daily,

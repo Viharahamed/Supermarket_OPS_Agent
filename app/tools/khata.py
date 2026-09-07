@@ -1,13 +1,8 @@
 # app/tools/khata.py
-"""Tool handlers for customer khata (ledger) actions.
-
-These functions accept validated Pydantic input models from
-``app.tools.schemas`` and interact with the Customer / KhataTransaction
-database models directly, since there is no dedicated khata service yet.
-"""
+"""Tool handlers for customer khata (ledger) actions with store_id context."""
 
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +17,12 @@ from app.tools.schemas import (
     GetKhataBalanceInput,
     GetKhataHistoryInput,
 )
+
+
+def _extract_store_id(context: Optional[Any]) -> int:
+    if context and hasattr(context, "principal") and context.principal:
+        return context.principal.store_id
+    return 1
 
 
 def _customer_to_dict(c: Customer) -> dict:
@@ -46,10 +47,11 @@ def _txn_to_dict(t: KhataTransaction) -> dict:
     }
 
 
-def find_customer(inp: FindCustomerInput) -> dict:
+def find_customer(inp: FindCustomerInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
         q = inp.query.lower()
-        customers = db.query(Customer).all()
+        customers = db.query(Customer).filter(Customer.store_id == store_id).all()
         matches = [
             c for c in customers
             if q in (c.name or "").lower() or q in (c.phone or "").lower()
@@ -57,9 +59,11 @@ def find_customer(inp: FindCustomerInput) -> dict:
     return {"customers": [_customer_to_dict(c) for c in matches], "count": len(matches)}
 
 
-def create_customer(inp: CreateCustomerInput) -> dict:
+def create_customer(inp: CreateCustomerInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
         customer = Customer(
+            store_id=store_id,
             name=inp.name,
             phone=inp.phone,
             khata_balance=Decimal("0.00"),
@@ -70,18 +74,20 @@ def create_customer(inp: CreateCustomerInput) -> dict:
         return _customer_to_dict(customer)
 
 
-def add_credit(inp: AddCreditInput) -> dict:
+def add_credit(inp: AddCreditInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        customer = db.query(Customer).filter(Customer.id == inp.customer_id).first()
+        customer = db.query(Customer).filter(Customer.id == inp.customer_id, Customer.store_id == store_id).first()
         if not customer:
             raise CustomerNotFoundError(inp.customer_id)
         customer.khata_balance += inp.amount
         txn = KhataTransaction(
+            store_id=store_id,
             customer_id=customer.id,
             transaction_type="CREDIT",
             amount=inp.amount,
             balance_after=customer.khata_balance,
-            description=inp.description,
+            notes=inp.description,
         )
         db.add(txn)
         db.commit()
@@ -89,18 +95,20 @@ def add_credit(inp: AddCreditInput) -> dict:
         return _txn_to_dict(txn)
 
 
-def record_payment(inp: RecordPaymentInput) -> dict:
+def record_payment(inp: RecordPaymentInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        customer = db.query(Customer).filter(Customer.id == inp.customer_id).first()
+        customer = db.query(Customer).filter(Customer.id == inp.customer_id, Customer.store_id == store_id).first()
         if not customer:
             raise CustomerNotFoundError(inp.customer_id)
         customer.khata_balance -= inp.amount
         txn = KhataTransaction(
+            store_id=store_id,
             customer_id=customer.id,
             transaction_type="PAYMENT",
             amount=inp.amount,
             balance_after=customer.khata_balance,
-            description=inp.description,
+            notes=inp.description,
         )
         db.add(txn)
         db.commit()
@@ -108,9 +116,10 @@ def record_payment(inp: RecordPaymentInput) -> dict:
         return _txn_to_dict(txn)
 
 
-def get_khata_balance(inp: GetKhataBalanceInput) -> dict:
+def get_khata_balance(inp: GetKhataBalanceInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        customer = db.query(Customer).filter(Customer.id == inp.customer_id).first()
+        customer = db.query(Customer).filter(Customer.id == inp.customer_id, Customer.store_id == store_id).first()
         if not customer:
             raise CustomerNotFoundError(inp.customer_id)
         return {
@@ -120,14 +129,15 @@ def get_khata_balance(inp: GetKhataBalanceInput) -> dict:
         }
 
 
-def get_khata_history(inp: GetKhataHistoryInput) -> dict:
+def get_khata_history(inp: GetKhataHistoryInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
     with get_db_context() as db:
-        customer = db.query(Customer).filter(Customer.id == inp.customer_id).first()
+        customer = db.query(Customer).filter(Customer.id == inp.customer_id, Customer.store_id == store_id).first()
         if not customer:
             raise CustomerNotFoundError(inp.customer_id)
         query = (
             db.query(KhataTransaction)
-            .filter(KhataTransaction.customer_id == inp.customer_id)
+            .filter(KhataTransaction.customer_id == inp.customer_id, KhataTransaction.store_id == store_id)
             .order_by(KhataTransaction.created_at.desc())
         )
         if inp.limit:

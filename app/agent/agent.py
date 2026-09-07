@@ -1,10 +1,6 @@
 # app/agent/agent.py
 
-"""Custom AI Agent Harness for Kirana AI Agent.
-
-Implements the OBSERVE -> REASON -> ACT execution loop using Gemma 2 via Ollama
-and the Phase 9 ToolRegistry.
-"""
+"""Custom AI Agent Harness for Kirana AI Agent with trusted execution context."""
 
 from __future__ import annotations
 
@@ -18,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from app.agent.config import MAX_AGENT_ITERATIONS
 from app.agent.prompts import SYSTEM_PROMPT
 from app.agent.schemas import AgentAction, AgentResponse
+from app.auth.schemas import AuthenticatedPrincipal, ToolExecutionContext
 from app.llm import LLMProvider, get_llm_provider
 from app.tools import registry as default_registry
 from app.tools.registry import ToolRegistry
@@ -28,14 +25,12 @@ def setup_logger() -> logging.Logger:
     if not logger.handlers:
         logger.setLevel(logging.INFO)
 
-        # Console handler
         ch = logging.StreamHandler()
         ch.setLevel(logging.INFO)
         formatter = logging.Formatter("[%(asctime)s] %(levelname)s - %(name)s: %(message)s")
         ch.setFormatter(formatter)
         logger.addHandler(ch)
 
-        # Rotating file handler at logs/agent.log
         os.makedirs("logs", exist_ok=True)
         fh = RotatingFileHandler("logs/agent.log", maxBytes=5 * 1024 * 1024, backupCount=3)
         fh.setLevel(logging.INFO)
@@ -92,13 +87,29 @@ class Agent:
         )
         return prompt
 
-    def run(self, user_message: str, user_id: Optional[int] = None) -> AgentResponse:
-        """Run the agent loop for a user query with multi-turn session memory."""
-        logger.info(f"--- Starting Agent Execution for query: '{user_message}' (user_id={user_id}) ---")
+    def run(
+        self,
+        user_message: str,
+        user_id: Optional[int] = None,
+        context: Optional[ToolExecutionContext] = None,
+    ) -> AgentResponse:
+        """Run the agent loop for a user query with trusted execution context."""
+        effective_user_id = user_id or (context.principal.user_id if context and context.principal else None)
+        effective_store_id = context.principal.store_id if context and context.principal else 1
+
+        if not context and effective_user_id:
+            context = ToolExecutionContext(
+                principal=AuthenticatedPrincipal(
+                    user_id=effective_user_id,
+                    store_id=effective_store_id,
+                    role="OPERATOR",
+                )
+            )
+
+        logger.info(f"--- Starting Agent Execution query: '{user_message}' (user_id={effective_user_id}, store_id={effective_store_id}) ---")
         system_prompt = self._build_system_prompt()
 
-        # Load existing multi-turn conversation history for this user
-        session_history = load_session_history(user_id) if user_id else []
+        session_history = load_session_history(effective_user_id, store_id=effective_store_id) if effective_user_id else []
         messages: List[Dict[str, str]] = list(session_history)
         messages.append({"role": "user", "content": user_message})
 
@@ -123,11 +134,10 @@ class Agent:
 
             if action.action_type in {"final_response", "clarification"}:
                 logger.info(f"--- Agent Completed successfully on iteration {iteration} ---")
-                if user_id:
-                    # Save user query and assistant answer to session memory
+                if effective_user_id:
                     session_history.append({"role": "user", "content": user_message})
                     session_history.append({"role": "assistant", "content": action.content or ""})
-                    save_session_history(user_id, session_history)
+                    save_session_history(effective_user_id, session_history, store_id=effective_store_id)
 
                 return AgentResponse(
                     content=action.content or "",
@@ -140,7 +150,7 @@ class Agent:
                 logger.info(f"Executing Tool '{tool_name}' with arguments: {arguments}")
 
                 tool_start = time.time()
-                tool_result = self.registry.execute(tool_name, arguments)
+                tool_result = self.registry.execute(tool_name, arguments, context=context)
                 tool_elapsed = time.time() - tool_start
 
                 if tool_result.success:
@@ -153,7 +163,6 @@ class Agent:
                     logger.warning(f"Tool '{tool_name}' failed [{err_code}]: {err_msg}")
                     obs_payload = json.dumps({"success": False, "error": {"code": err_code, "message": err_msg}}, default=str)
 
-                # Record assistant action & tool observation in message history
                 messages.append({"role": "assistant", "content": action.model_dump_json()})
                 messages.append({"role": "user", "content": f"Observation for tool '{tool_name}': {obs_payload}"})
 
@@ -164,8 +173,8 @@ class Agent:
         )
 
 
-def load_session_history(user_id: int) -> List[Dict[str, str]]:
-    """Load conversation history for a user ID from AgentSession table."""
+def load_session_history(user_id: int, store_id: int = 1) -> List[Dict[str, str]]:
+    """Load conversation history for a user ID and store ID from AgentSession table."""
     from app.db.database import get_db_context
     from app.db.models import AgentSession
 
@@ -173,7 +182,10 @@ def load_session_history(user_id: int) -> List[Dict[str, str]]:
         return []
     try:
         with get_db_context() as db:
-            session_rec = db.query(AgentSession).filter(AgentSession.user_id == user_id).first()
+            session_rec = db.query(AgentSession).filter(
+                AgentSession.store_id == store_id,
+                AgentSession.user_id == user_id,
+            ).first()
             if session_rec and session_rec.history_json:
                 return json.loads(session_rec.history_json)
     except Exception as exc:
@@ -181,8 +193,8 @@ def load_session_history(user_id: int) -> List[Dict[str, str]]:
     return []
 
 
-def save_session_history(user_id: int, history: List[Dict[str, str]], max_turns: int = 12) -> None:
-    """Save conversation history for a user ID into AgentSession table."""
+def save_session_history(user_id: int, history: List[Dict[str, str]], store_id: int = 1, max_turns: int = 12) -> None:
+    """Save conversation history for a user ID and store ID into AgentSession table."""
     from app.db.database import get_db_context
     from app.db.models import AgentSession
 
@@ -191,9 +203,12 @@ def save_session_history(user_id: int, history: List[Dict[str, str]], max_turns:
     try:
         trimmed = history[-max_turns:]
         with get_db_context() as db:
-            session_rec = db.query(AgentSession).filter(AgentSession.user_id == user_id).first()
+            session_rec = db.query(AgentSession).filter(
+                AgentSession.store_id == store_id,
+                AgentSession.user_id == user_id,
+            ).first()
             if not session_rec:
-                session_rec = AgentSession(user_id=user_id, history_json=json.dumps(trimmed))
+                session_rec = AgentSession(store_id=store_id, user_id=user_id, history_json=json.dumps(trimmed))
                 db.add(session_rec)
             else:
                 session_rec.history_json = json.dumps(trimmed)
@@ -202,17 +217,17 @@ def save_session_history(user_id: int, history: List[Dict[str, str]], max_turns:
         logger.warning(f"Failed to save session history for user_id {user_id}: {exc}")
 
 
-def clear_session_history(user_id: int) -> bool:
-    """Clear conversation history for a given user ID from AgentSession table.
-
-    Does NOT touch products, bills, stock, customers, Khata, or store preferences.
-    """
+def clear_session_history(user_id: int, store_id: int = 1) -> bool:
+    """Clear conversation history for a user ID and store ID from AgentSession table."""
     from app.db.database import get_db_context
     from app.db.models import AgentSession
 
     try:
         with get_db_context() as db:
-            session_rec = db.query(AgentSession).filter(AgentSession.user_id == user_id).first()
+            session_rec = db.query(AgentSession).filter(
+                AgentSession.store_id == store_id,
+                AgentSession.user_id == user_id,
+            ).first()
             if session_rec:
                 db.delete(session_rec)
                 db.commit()

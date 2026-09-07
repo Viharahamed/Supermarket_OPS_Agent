@@ -103,8 +103,8 @@ class ToolRegistry:
     def list_tools(self) -> List[Dict[str, Any]]:
         return [td.to_dict() for td in self._registry.values()]
 
-    def execute(self, name: str, raw_args: dict) -> ToolResult:
-        """Validate arguments and run the handler.
+    def execute(self, name: str, raw_args: dict, context: Any = None) -> ToolResult:
+        """Validate arguments and run the handler with optional trusted execution context.
 
         Returns a ``ToolResult`` with ``success`` flag, ``data`` payload, and a
         ``ToolError`` when validation or business exceptions occur.
@@ -125,7 +125,12 @@ class ToolRegistry:
             )
 
         try:
-            result = definition.handler(validated)
+            import inspect
+            sig = inspect.signature(definition.handler)
+            if context is not None and ("context" in sig.parameters or len(sig.parameters) >= 2):
+                result = definition.handler(validated, context=context)
+            else:
+                result = definition.handler(validated)
             return ToolResult(success=True, data=result)
         except Exception as exc:
             return ToolResult(success=False, error=ToolError(code="TOOL_EXECUTION_ERROR", message=str(exc)))
@@ -210,5 +215,5 @@ def list_tools() -> List[Dict[str, Any]]:
     return registry.list_tools()
 
 
-def execute(name: str, raw_args: dict) -> ToolResult:
-    return registry.execute(name, raw_args)
+def execute(name: str, raw_args: dict, context: Any = None) -> ToolResult:
+    return registry.execute(name, raw_args, context=context)

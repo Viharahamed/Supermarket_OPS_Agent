@@ -15,20 +15,22 @@ from app.config import Settings, get_settings
 
 def test_config_development_defaults():
     """Verify default values for development environment."""
-    settings = Settings(_env_file=None)
-    assert settings.app_name == "kirana-ai-agent"
-    assert settings.app_env == "development"
-    assert settings.debug is True
-    assert settings.log_level == "INFO"
-    assert settings.llm_provider == "ollama"
-    assert settings.database_url == "sqlite:///./data/kirana.db"
-    assert settings.host == "0.0.0.0"
-    assert settings.port == 8000
-    assert settings.agent_max_iterations == 8
-    assert settings.timezone == "Asia/Kolkata"
-    assert settings.document_storage == "local"
-    assert settings.local_document_dir == "generated"
-    assert settings.cors_origins == ["http://localhost:3000"]
+    with patch.dict(os.environ, {}, clear=True):
+        settings = Settings(_env_file=None)
+        assert settings.app_name == "kirana-ai-agent"
+        assert settings.app_env == "development"
+        assert settings.debug is True
+        assert settings.log_level == "INFO"
+        assert settings.llm_provider == "ollama"
+        assert settings.database_url == "sqlite:///./data/kirana.db"
+        assert settings.host == "0.0.0.0"
+        assert settings.port == 8000
+        assert settings.agent_max_iterations == 8
+        assert settings.timezone == "Asia/Kolkata"
+        assert settings.document_storage == "local"
+        assert settings.local_document_dir == "generated"
+        assert settings.cors_origins == ["http://localhost:3000"]
+
 
 
 def test_config_test_environment():

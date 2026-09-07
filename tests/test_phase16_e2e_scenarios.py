@@ -265,7 +265,7 @@ def test_scenario_f_khata_ledger(db_session: Session):
 def test_scenario_g_daily_close_report(db_session: Session):
     """SCENARIO G: Daily sales summary with tax, payment breakdown, and date bounds."""
     principal = bootstrap_store_and_user(db=db_session)
-    report = reporting_service.get_daily_sales(report_date=date.today(), store_id=principal.store_id)
+    report = reporting_service.get_daily_sales(report_date=reporting_service.get_store_date(), store_id=principal.store_id)
     assert report is not None
     assert hasattr(report, "bill_count")
     assert hasattr(report, "grand_total")

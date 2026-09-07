@@ -258,12 +258,46 @@ def test_sales_reporting_isolation(setup_multi_tenant_stores, db_session: Sessio
     billing_service.add_bill_item(db_session, bill_id=b2.id, product_id=p2.id, quantity=Decimal("1"), store_id=p_b.store_id)
     billing_service.finalize_bill(db_session, bill_id=b2.id, payment_method="CASH", store_id=p_b.store_id)
 
-    from datetime import date
-    rep_a = reporting_service.get_daily_sales(date.today(), store_id=p_a.store_id)
-    rep_b = reporting_service.get_daily_sales(date.today(), store_id=p_b.store_id)
+    rep_a = reporting_service.get_daily_sales(reporting_service.get_store_date(), store_id=p_a.store_id)
+    rep_b = reporting_service.get_daily_sales(reporting_service.get_store_date(), store_id=p_b.store_id)
 
     assert rep_a.grand_total == Decimal("100.00")
     assert rep_b.grand_total == Decimal("500.00")
+
+
+def test_get_store_date_timezone_independence(monkeypatch):
+    """Regression test proving get_store_date() uses Asia/Kolkata date regardless of host OS clock/timezone."""
+    from datetime import datetime, date, timezone
+    from app.services.reporting_service import get_store_date
+
+    # Mock datetime near IST midnight boundary:
+    # 2026-09-07 19:00:00 UTC == 2026-09-08 00:30:00 IST (+5:30)
+    # Host date in UTC is 2026-09-07, but store date in IST MUST be 2026-09-08
+    utc_dt_after_ist_midnight = datetime(2026, 9, 7, 19, 0, 0, tzinfo=timezone.utc)
+
+    class MockDatetimeAfterISTMidnight:
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return utc_dt_after_ist_midnight.astimezone(tz)
+            return utc_dt_after_ist_midnight
+
+    monkeypatch.setattr("app.services.reporting_service.datetime", MockDatetimeAfterISTMidnight)
+    assert get_store_date() == date(2026, 9, 8)
+
+    # 2026-09-07 18:00:00 UTC == 2026-09-07 23:30:00 IST (+5:30)
+    # Store date in IST is 2026-09-07
+    utc_dt_before_ist_midnight = datetime(2026, 9, 7, 18, 0, 0, tzinfo=timezone.utc)
+
+    class MockDatetimeBeforeISTMidnight:
+        @classmethod
+        def now(cls, tz=None):
+            if tz is not None:
+                return utc_dt_before_ist_midnight.astimezone(tz)
+            return utc_dt_before_ist_midnight
+
+    monkeypatch.setattr("app.services.reporting_service.datetime", MockDatetimeBeforeISTMidnight)
+    assert get_store_date() == date(2026, 9, 7)
 
 
 def test_document_storage_path_isolation(setup_multi_tenant_stores, db_session: Session):

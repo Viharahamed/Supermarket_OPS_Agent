@@ -69,12 +69,7 @@ def generate_sales_analysis_pptx(
     end_date_str = end_date_str or end_date
     settings = get_settings()
 
-    try:
-        from zoneinfo import ZoneInfo
-        tz = ZoneInfo(settings.timezone)
-        today = datetime.now(tz).date()
-    except Exception:
-        today = date.today()
+    today = reporting_service.get_store_date()
 
     if end_date_str:
         end_d = parse_date(end_date_str)

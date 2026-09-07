@@ -31,6 +31,11 @@ except Exception:
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
+def get_store_date() -> date:
+    """Return current calendar date in the store's configured timezone (Asia/Kolkata)."""
+    return datetime.now(_STORE_ZONE).date()
+
+
 def _local_midnight(d: date) -> datetime:
     """Return a timezone-aware datetime at 00:00 of the given date in the store timezone."""
     return datetime.combine(d, time.min).replace(tzinfo=_STORE_ZONE)
@@ -61,7 +66,7 @@ def _get_period_bounds(
         start_dt = start
         end_dt = end
     elif start is None and end is None:
-        today = datetime.now(_STORE_ZONE).date()
+        today = get_store_date()
         start_dt = _local_midnight(today)
         end_dt = start_dt + timedelta(days=1)
     else:
@@ -72,9 +77,10 @@ def _get_period_bounds(
 # ---------------------------------------------------------------------------
 # Reporting functions
 # ---------------------------------------------------------------------------
-def get_daily_sales(report_date: date, store_id: int = 1) -> schemas.DailySalesReport:
-    """Return sales totals for a single day for store_id."""
-    start_utc, end_utc = _get_period_bounds(date_=report_date)
+def get_daily_sales(report_date: Optional[date] = None, store_id: int = 1) -> schemas.DailySalesReport:
+    """Return sales totals for a single day for store_id. Defaults to current store date."""
+    target_date = report_date or get_store_date()
+    start_utc, end_utc = _get_period_bounds(date_=target_date)
     with get_db_context() as db:
         stmt = (
             select(
@@ -106,7 +112,7 @@ def get_daily_sales(report_date: date, store_id: int = 1) -> schemas.DailySalesR
             grand_total,
         ) = result
         return schemas.DailySalesReport(
-            period=schemas.Period(start=report_date.isoformat(), end=report_date.isoformat()),
+            period=schemas.Period(start=target_date.isoformat(), end=target_date.isoformat()),
             bill_count=bill_count or 0,
             subtotal=subtotal,
             taxable_amount=taxable_amount,

@@ -5,6 +5,7 @@ from datetime import date
 from typing import Any, Optional
 
 from app.services.reporting_service import (
+    get_store_date,
     get_daily_sales as svc_get_daily_sales,
     get_sales_summary as svc_get_sales_summary,
     get_payment_breakdown as svc_get_payment_breakdown,
@@ -40,7 +41,7 @@ def _to_dict(obj):
 
 def get_daily_sales(inp: GetDailySalesInput, context: Optional[Any] = None) -> dict:
     store_id = _extract_store_id(context)
-    raw_date = inp.report_date or inp.start or date.today().isoformat()
+    raw_date = inp.report_date or inp.start or get_store_date().isoformat()
     d = date.fromisoformat(raw_date)
     result = svc_get_daily_sales(d, store_id=store_id)
     return _to_dict(result)

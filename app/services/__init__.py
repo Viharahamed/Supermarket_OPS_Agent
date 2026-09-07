@@ -22,6 +22,9 @@ from app.services.billing_service import (
     calculate_bill,
     finalize_bill,
 )
+from app.services.reporting_service import (
+    get_store_date,
+)
 from app.services.schemas import (
     StockStatus,
     ProductDTO,
@@ -51,6 +54,7 @@ __all__ = [
     "remove_bill_item",
     "calculate_bill",
     "finalize_bill",
+    "get_store_date",
     "StockStatus",
     "ProductDTO",
     "StockStatusDTO",

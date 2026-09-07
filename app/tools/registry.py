@@ -51,6 +51,7 @@ from app.tools.schemas import (
     GetTopProductsInput,
     GetGstSummaryInput,
     GetStockHealthInput,
+    GetDailyCloseInput,
     GetPreferenceInput,
     SetPreferenceInput,
     ListPreferencesInput,
@@ -162,7 +163,7 @@ from app.tools.khata import (
     get_khata_balance,
     get_khata_history,
 )
-from app.tools.reporting import get_daily_sales, get_monthly_sales, get_product_performance
+from app.tools.reporting import get_daily_sales, get_monthly_sales, get_product_performance, get_daily_close
 from app.tools.preferences import get_user_preferences, update_user_preferences
 from app.tools.documents import generate_invoice_pdf, generate_sales_analysis_pptx
 
@@ -195,6 +196,7 @@ registry.register("get_khata_history", "Fetch recent credit/payment history for 
 registry.register("get_daily_sales", "Return total sales for a specific date range.", GetDailySalesInput, get_daily_sales)
 registry.register("get_monthly_sales", "Return total sales for a month.", GetSalesSummaryInput, get_monthly_sales)
 registry.register("get_product_performance", "Return sales performance for a product over a date range.", GetTopProductsInput, get_product_performance)
+registry.register("get_daily_close", "Generate a comprehensive end-of-day sales, tax, payment breakdown, and stock health report.", GetDailyCloseInput, get_daily_close)
 
 # Preference tools
 registry.register("get_user_preferences", "Fetch stored UI/behavior preferences for a user.", GetPreferenceInput, get_user_preferences)

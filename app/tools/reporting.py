@@ -107,6 +107,7 @@ def get_stock_health(inp: GetStockHealthInput, context: Optional[Any] = None) ->
 
 def get_daily_close(inp: GetDailyCloseInput, context: Optional[Any] = None) -> dict:
     store_id = _extract_store_id(context)
-    d = date.fromisoformat(inp.report_date)
+    raw_date = inp.report_date or get_store_date().isoformat()
+    d = date.fromisoformat(raw_date)
     result = svc_daily_close(d, store_id=store_id)
     return _to_dict(result)

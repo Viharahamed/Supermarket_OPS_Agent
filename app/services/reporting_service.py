@@ -342,10 +342,11 @@ def get_stock_health(store_id: int = 1) -> schemas.StockHealthReport:
                         shortage_amount=shortage,
                     )
                 )
+        from app.services.inventory_service import product_to_stock_status_dto
         return schemas.StockHealthReport(
-            in_stock=[schemas.StockStatusDTO.from_orm(p) for p in in_stock],
-            low_stock=[schemas.StockStatusDTO.from_orm(p) for p in low_stock],
-            out_of_stock=[schemas.StockStatusDTO.from_orm(p) for p in out_of_stock],
+            in_stock=[product_to_stock_status_dto(p) for p in in_stock],
+            low_stock=[product_to_stock_status_dto(p) for p in low_stock],
+            out_of_stock=[product_to_stock_status_dto(p) for p in out_of_stock],
             reorder_candidates=reorder,
         )
 

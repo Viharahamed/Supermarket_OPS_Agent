@@ -306,7 +306,7 @@ class GetGstSummaryInput(DateRangeInput):
 
 
 class GetDailyCloseInput(BaseModel):
-    report_date: str = Field(..., description="ISO date for the daily close report")
+    report_date: Optional[str] = Field(default=None, description="ISO date for the daily close report (defaults to today if omitted)")
 
     model_config = ConfigDict(extra="forbid")
 

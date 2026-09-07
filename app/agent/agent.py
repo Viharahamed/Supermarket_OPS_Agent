@@ -79,8 +79,11 @@ class Agent:
                 "arguments": params,
             })
         tools_description = json.dumps(compact_tools, indent=2)
+        from app.services.reporting_service import get_store_date
+        current_date_str = get_store_date().isoformat()
         prompt = (
             f"{SYSTEM_PROMPT}\n\n"
+            f"CURRENT STORE DATE: {current_date_str}\n\n"
             f"AVAILABLE TOOLS:\n"
             f"{tools_description}\n\n"
             f"Remember: Respond ONLY with a valid JSON object matching the AgentAction schema."

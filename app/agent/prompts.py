@@ -66,6 +66,10 @@ CORE RULES:
      * If the task is complete, return a final response.
      * Every tool call must use the exact AgentAction format.
 
+9. DATE HANDLING & RELATIVE TIME:
+   - When answering questions about today's date (e.g., "What date is it today?"), refer directly to CURRENT STORE DATE provided in system context.
+   - For relative reporting queries ("today's sales", "close the day", "daily report for today"), omit `report_date` or pass `null` so the system automatically uses the current store date (`get_store_date()`). Only pass `report_date` when the user explicitly provides a specific historical date string (e.g., "2026-08-15").
+
 RESPONSE FORMAT:
 To perform an action:
 {

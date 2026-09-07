@@ -47,16 +47,53 @@ def _txn_to_dict(t: KhataTransaction) -> dict:
     }
 
 
+import re
+
+
+def _normalize_customer_query(raw_query: str) -> str:
+    """Normalize customer query string by trimming, stripping punctuation, possessives, and noise words."""
+    if not raw_query:
+        return ""
+    q = raw_query.strip().lower()
+    # Remove common trailing noise words like "credit", "balance", "khata", "account", "ledger"
+    q = re.sub(r"\b(credit|balance|khata|account|ledger)\b", "", q, flags=re.IGNORECASE).strip()
+    # Remove possessive endings like 's or ' or ’s
+    q = re.sub(r"['’]s?$", "", q, flags=re.IGNORECASE).strip()
+    # Strip non-alphanumeric trailing/leading characters except space
+    q = re.sub(r"^[^\w]+|[^\w]+$", "", q).strip()
+    # Collapse multiple spaces
+    q = re.sub(r"\s+", " ", q)
+    return q
+
+
 def find_customer(inp: FindCustomerInput, context: Optional[Any] = None) -> dict:
     store_id = _extract_store_id(context)
+    raw_q = inp.query or ""
+    norm_q = _normalize_customer_query(raw_q)
+
     with get_db_context() as db:
-        q = inp.query.lower()
         customers = db.query(Customer).filter(Customer.store_id == store_id).all()
-        matches = [
-            c for c in customers
-            if q in (c.name or "").lower() or q in (c.phone or "").lower()
-        ]
-    return {"customers": [_customer_to_dict(c) for c in matches], "count": len(matches)}
+        matches = []
+        for c in customers:
+            c_name = (c.name or "").strip().lower()
+            c_phone = (c.phone or "").strip().lower()
+            c_name_norm = re.sub(r"\s+", " ", c_name)
+
+            if norm_q and (
+                norm_q == c_name_norm
+                or norm_q == c_phone
+                or norm_q in c_name_norm
+                or norm_q in c_phone
+                or c_name_norm in norm_q
+            ):
+                matches.append(c)
+            elif raw_q.lower().strip() and (raw_q.lower().strip() in c_name_norm or raw_q.lower().strip() in c_phone):
+                matches.append(c)
+
+        result_list = [_customer_to_dict(c) for c in matches]
+        count = len(result_list)
+
+    return {"customers": result_list, "count": count}
 
 
 def create_customer(inp: CreateCustomerInput, context: Optional[Any] = None) -> dict:

@@ -66,7 +66,36 @@ class OpenRouterProvider(LLMProvider):
             "model": self.model,
             "messages": payload_messages,
             "temperature": 0.1,
-            "response_format": {"type": "json_object"},
+            "provider": {
+                "require_parameters": True,
+            },
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "agent_action",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "action_type": {
+                                "type": "string",
+                                "enum": ["tool_call", "final_response", "clarification"],
+                            },
+                            "tool_name": {
+                                "type": ["string", "null"],
+                            },
+                            "arguments": {
+                                "type": ["object", "null"],
+                            },
+                            "content": {
+                                "type": ["string", "null"],
+                            },
+                        },
+                        "required": ["action_type", "tool_name", "arguments", "content"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
         }
 
         try:

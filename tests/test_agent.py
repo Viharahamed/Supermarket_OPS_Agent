@@ -411,12 +411,12 @@ def test_agent_grounded_product_resolution_and_draft_creation(db_session):
 
 
 def test_agent_system_prompt_schema_and_constraints():
-    """Verify system prompt tool formatting and explicit action constraints.
+    """Verify system prompt tool formatting and explicit positive action constraints.
 
     Verifies:
     1. Agent._build_system_prompt() uses 'tool_name' as the schema key in AVAILABLE TOOLS.
     2. System prompt explicitly constrains action_type to 'tool_call', 'final_response', and 'clarification'.
-    3. System prompt explicitly forbids inventing custom action_types or tool names.
+    3. System prompt does NOT contain negative priming example tokens ('user_input', 'draft_bill_items').
     """
     mock_llm = MagicMock()
     agent = Agent(llm_client=mock_llm)
@@ -430,12 +430,80 @@ def test_agent_system_prompt_schema_and_constraints():
     assert '"tool_call"' in prompt
     assert '"final_response"' in prompt
     assert '"clarification"' in prompt
-    assert 'NEVER invent action_type values' in prompt
 
-    # 3. Requires exact registered tool names
-    assert '`tool_name` MUST strictly match an exact registered tool name' in prompt
-
-
+    # 3. Does NOT contain invalid priming tokens
+    assert 'user_input' not in prompt
+    assert 'draft_bill_items' not in prompt
 
 
+def test_openrouter_provider_structured_output_payload():
+    """Verify OpenRouterProvider request payload uses strict JSON Schema for AgentAction."""
+    from unittest.mock import patch
+    from app.llm.openrouter import OpenRouterProvider
 
+    provider = OpenRouterProvider(api_key="test_key")
+
+    with patch("requests.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "choices": [{
+                "message": {
+                    "content": '{"action_type": "final_response", "tool_name": null, "arguments": null, "content": "Hello"}'
+                }
+            }]
+        }
+
+        provider.generate_action("System Prompt", [{"role": "user", "content": "Hi"}])
+
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        json_payload = kwargs["json"]
+
+        assert "provider" in json_payload
+        assert json_payload["provider"]["require_parameters"] is True
+
+        assert "response_format" in json_payload
+        rf = json_payload["response_format"]
+        assert rf["type"] == "json_schema"
+        assert rf["json_schema"]["strict"] is True
+        assert rf["json_schema"]["name"] == "agent_action"
+
+        schema = rf["json_schema"]["schema"]
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == {"action_type", "tool_name", "arguments", "content"}
+        assert schema["properties"]["action_type"]["enum"] == ["tool_call", "final_response", "clarification"]
+
+
+def test_agent_action_structured_output_envelope_valid_types():
+    """Regression test demonstrating valid AgentAction envelope works for tool_call, final_response, clarification."""
+    # 1. tool_call envelope
+    tc = AgentAction.model_validate({
+        "action_type": "tool_call",
+        "tool_name": "search_products",
+        "arguments": {"query": "sugar"},
+        "content": None,
+    })
+    assert tc.action_type == "tool_call"
+    assert tc.tool_name == "search_products"
+    assert tc.arguments == {"query": "sugar"}
+
+    # 2. final_response envelope
+    fr = AgentAction.model_validate({
+        "action_type": "final_response",
+        "tool_name": None,
+        "arguments": None,
+        "content": "Draft bill #8 created.",
+    })
+    assert fr.action_type == "final_response"
+    assert fr.content == "Draft bill #8 created."
+
+    # 3. clarification envelope
+    cl = AgentAction.model_validate({
+        "action_type": "clarification",
+        "tool_name": None,
+        "arguments": None,
+        "content": "Which Maggi variant?",
+    })
+    assert cl.action_type == "clarification"
+    assert cl.content == "Which Maggi variant?"

@@ -52,11 +52,9 @@ CORE RULES:
    - Format final responses using clean Telegram HTML (`<b>`, `<i>`, `<code>`, `₹`).
 
 7. STRICT ACTION FORMAT CONSTRAINTS:
-   - Every response MUST be a JSON object containing ONLY valid AgentAction fields.
+   - Every response MUST be a JSON object containing ONLY valid AgentAction fields (`action_type`, `tool_name`, `arguments`, `content`).
    - `action_type` MUST strictly be one of: "tool_call", "final_response", or "clarification".
-   - NEVER invent action_type values such as "user_input", "draft_bill", or "process_items".
    - `tool_name` MUST strictly match an exact registered tool name listed under AVAILABLE TOOLS.
-   - NEVER invent tool names such as "draft_bill_items", "add_items", or "bill_draft".
 
 8. TOOL OBSERVATION HANDLING:
    - After a tool is executed and an observation is provided:
@@ -71,18 +69,23 @@ To perform an action:
 {
     "action_type": "tool_call",
     "tool_name": "<exact registered tool_name from AVAILABLE TOOLS>",
-    "arguments": { ... }
+    "arguments": { ... },
+    "content": null
 }
 
 To provide the final answer to the user:
 {
     "action_type": "final_response",
+    "tool_name": null,
+    "arguments": null,
     "content": "<your response>"
 }
 
 To ask a necessary business clarification (e.g., multiple matching products for bill addition):
 {
     "action_type": "clarification",
+    "tool_name": null,
+    "arguments": null,
     "content": "<your clarification question>"
 }
 

@@ -17,6 +17,7 @@ Tests:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -74,6 +75,7 @@ def test_webhook_accepts_valid_secret_and_processes_update():
 
         mock_telegram_app = MagicMock()
         mock_telegram_app.bot = MagicMock()
+        mock_telegram_app.bot.defaults = None
         mock_telegram_app.process_update = AsyncMock()
 
         client = TestClient(app)

@@ -102,3 +102,12 @@ def test_alembic_downgrade_and_upgrade_cycle(temp_sqlite_db_url):
     engine2.dispose()
     assert "products" in tables_after_reupgrade
     assert "bills" in tables_after_reupgrade
+
+
+def test_alembic_main_entrypoint_unshadowing():
+    """Verify that alembic/__main__.py successfully imports real Alembic CLI main function."""
+    _require_alembic()
+    import alembic.__main__ as alembic_main
+    assert hasattr(alembic_main, "main")
+    assert callable(alembic_main.main)
+

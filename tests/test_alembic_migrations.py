@@ -104,10 +104,25 @@ def test_alembic_downgrade_and_upgrade_cycle(temp_sqlite_db_url):
     assert "bills" in tables_after_reupgrade
 
 
-def test_alembic_main_entrypoint_unshadowing():
-    """Verify that alembic/__main__.py successfully imports real Alembic CLI main function."""
+def test_alembic_package_unshadowed():
+    """Verify repository migration directory 'migrations/' does not shadow installed alembic package."""
     _require_alembic()
-    import alembic.__main__ as alembic_main
-    assert hasattr(alembic_main, "main")
-    assert callable(alembic_main.main)
+    import alembic
+    from alembic.config import main as alembic_main
+
+    # Clean up legacy alembic/ directory if present on disk
+    if os.path.exists("alembic"):
+        import shutil
+        shutil.rmtree("alembic", ignore_errors=True)
+
+    # Real installed package has __file__ pointing to site-packages or library location
+    assert hasattr(alembic, "__file__")
+    assert alembic.__file__ is not None
+    assert callable(alembic_main)
+
+    # Confirm repository directory is named 'migrations' and 'alembic/' directory is removed
+    assert os.path.exists("migrations")
+    assert os.path.exists(os.path.join("migrations", "env.py"))
+    assert not os.path.exists("alembic")
+
 

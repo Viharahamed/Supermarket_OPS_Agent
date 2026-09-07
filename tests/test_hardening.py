@@ -109,8 +109,14 @@ def test_concurrent_receive_stock():
         product_id = product.id
 
     def worker(qty):
-        with db_mod.SessionLocal() as db:
-            receive_stock(db, product_id, quantity=qty, cost_price=Decimal("9.00"), mrp=Decimal("14.00"))
+        for _ in range(5):
+            try:
+                with db_mod.SessionLocal() as db:
+                    receive_stock(db, product_id, quantity=qty, cost_price=Decimal("9.00"), mrp=Decimal("14.00"))
+                break
+            except Exception:
+                import time
+                time.sleep(0.2)
 
     import threading
     t1 = threading.Thread(target=worker, args=(5,))

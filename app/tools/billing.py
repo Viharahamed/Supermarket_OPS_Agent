@@ -12,6 +12,7 @@ from app.services.billing_service import (
     create_draft_bill as svc_create_draft_bill,
     get_current_bill as svc_get_current_bill,
     add_bill_item as svc_add_bill_item,
+    add_bill_items as svc_add_bill_items,
     update_bill_item as svc_update_bill_item,
     remove_bill_item as svc_remove_bill_item,
     calculate_bill as svc_calculate_bill,
@@ -22,6 +23,7 @@ from app.tools.schemas import (
     CreateDraftBillInput,
     GetCurrentBillInput,
     AddBillItemInput,
+    AddBillItemsInput,
     UpdateBillItemInput,
     RemoveBillItemInput,
     CalculateBillInput,
@@ -59,6 +61,14 @@ def add_bill_item(inp: AddBillItemInput, context: Optional[Any] = None) -> dict:
     store_id = _extract_store_id(context)
     with get_db_context() as db:
         result = svc_add_bill_item(db, inp.bill_id, inp.product_id, inp.quantity, store_id=store_id)
+    return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
+
+def add_bill_items(inp: AddBillItemsInput, context: Optional[Any] = None) -> dict:
+    store_id = _extract_store_id(context)
+    items_list = [{"product_id": item.product_id, "quantity": item.quantity} for item in inp.items]
+    with get_db_context() as db:
+        result = svc_add_bill_items(db, inp.bill_id, items_list, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
 
 

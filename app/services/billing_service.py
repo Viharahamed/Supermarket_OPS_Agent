@@ -1,7 +1,8 @@
+from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.db.models import Bill, BillItem, Product, StockMovement
@@ -270,6 +271,107 @@ def add_bill_item(
     else:
         with get_db_context() as s:
             return _do_add(s)
+
+
+def add_bill_items(
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+    items: Optional[List[dict] | List[Tuple[int, Decimal]]] = None,
+    store_id: int = 1,
+) -> BillDTO:
+    """Add multiple product items to draft bill in store_id in a single atomic transaction."""
+    if not isinstance(db, Session):
+        store_id = items if isinstance(items, int) else store_id
+        items = bill_id if isinstance(bill_id, list) else items
+        bill_id = db
+        db = None
+
+    def _do_add_batch(s: Session) -> BillDTO:
+        if not items:
+            raise BillingError("No items provided for batch addition.")
+
+        bill = s.query(Bill).filter(Bill.id == bill_id, Bill.store_id == store_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id or 0)
+        if bill.status == "FINALIZED":
+            raise BillAlreadyFinalizedError(bill_id or 0)
+        if bill.status != "DRAFT":
+            raise BillNotDraftError(bill_id or 0, bill.status)
+
+        try:
+            for item_data in items:
+                if isinstance(item_data, dict):
+                    p_id = item_data.get("product_id")
+                    raw_qty = item_data.get("quantity")
+                else:
+                    p_id, raw_qty = item_data
+
+                try:
+                    qty = Decimal(str(raw_qty)) if not isinstance(raw_qty, Decimal) else raw_qty
+                except (ValueError, TypeError, InvalidOperation):
+                    raise InvalidQuantityError(f"Invalid quantity: {raw_qty}")
+
+                if qty <= Decimal("0.00"):
+                    raise InvalidQuantityError("Quantity added must be strictly greater than 0.")
+
+                product = s.query(Product).filter(Product.id == p_id, Product.store_id == store_id).first()
+                if not product:
+                    raise ProductNotFoundError(p_id or 0)
+                if not product.active:
+                    raise ProductInactiveError(p_id or 0)
+
+                validate_pricing(product.cost_price, product.selling_price, product.mrp)
+
+                existing_item = next((item for item in bill.items if item.product_id == p_id), None)
+
+                if existing_item:
+                    new_qty = existing_item.quantity + qty
+                    tax_res = calculate_line_item_gst(
+                        unit_price=existing_item.unit_price,
+                        quantity=new_qty,
+                        gst_rate=existing_item.gst_rate,
+                        hsn_code=existing_item.hsn_code,
+                    )
+                    existing_item.quantity = new_qty
+                    existing_item.taxable_amount = tax_res.taxable_amount
+                    existing_item.cgst = tax_res.cgst_amount
+                    existing_item.sgst = tax_res.sgst_amount
+                    existing_item.tax_amount = tax_res.total_tax
+                    existing_item.line_total = tax_res.line_total
+                else:
+                    tax_res = calculate_product_line_item(product, qty)
+                    new_item = BillItem(
+                        bill_id=bill.id,
+                        product_id=product.id,
+                        product_name_snapshot=product.name,
+                        quantity=qty,
+                        unit_price=product.selling_price,
+                        cost_price=product.cost_price,
+                        mrp=product.mrp,
+                        gst_rate=product.gst_rate,
+                        hsn_code=product.hsn_code,
+                        taxable_amount=tax_res.taxable_amount,
+                        cgst=tax_res.cgst_amount,
+                        sgst=tax_res.sgst_amount,
+                        tax_amount=tax_res.total_tax,
+                        line_total=tax_res.line_total,
+                    )
+                    s.add(new_item)
+                    bill.items.append(new_item)
+
+            _recalculate_bill_totals(bill)
+            s.commit()
+            s.refresh(bill)
+            return bill_to_dto(bill)
+        except Exception:
+            s.rollback()
+            raise
+
+    if db is not None and isinstance(db, Session):
+        return _do_add_batch(db)
+    else:
+        with get_db_context() as s:
+            return _do_add_batch(s)
 
 
 def update_bill_item(

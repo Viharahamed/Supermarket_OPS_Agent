@@ -141,6 +141,27 @@ class AddBillItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class BatchBillItemInput(BaseModel):
+    product_id: int = Field(..., description="Database product ID to add")
+    quantity: Decimal = Field(..., description="Quantity to add (must be > 0)")
+
+    @field_validator("quantity")
+    @classmethod
+    def positive_quantity(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("quantity must be > 0")
+        return v
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AddBillItemsInput(BaseModel):
+    bill_id: int = Field(..., description="Target draft bill ID")
+    items: List[BatchBillItemInput] = Field(..., description="List of product items and quantities to add in a single batch")
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class UpdateBillItemInput(BaseModel):
     bill_id: int
     item_id: int

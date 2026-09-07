@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, alias="PORT")
 
     # Agent settings
-    agent_max_iterations: int = Field(default=8, alias="AGENT_MAX_ITERATIONS")
+    agent_max_iterations: int = Field(default=15, alias="AGENT_MAX_ITERATIONS")
 
     # Timezone setting
     timezone: str = Field(default="Asia/Kolkata", alias="TIMEZONE")

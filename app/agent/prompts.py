@@ -30,12 +30,12 @@ CORE RULES:
 
 4. BILLING WORKFLOWS:
    - "Create a draft bill" -> Call `create_draft_bill()` immediately with no arguments.
-   - "Make a draft bill for 2 Maggi and 1 Sugar":
-     Step 1: Search products for "Maggi"
-     Step 2: Search products for "Sugar"
-     Step 3: Call `create_draft_bill()`
-     Step 4: Call `add_bill_item` for each resolved product
-     Step 5: Return a clear summary of the draft bill to the user.
+   - "Make a bill for [multiple items]":
+     Step 1: Search products for each requested item name.
+     Step 2: Call `create_draft_bill()`
+     Step 3: When adding multiple resolved products, prefer calling `add_bill_items(bill_id=..., items=[{"product_id": ..., "quantity": ...}, ...])` in a single batch tool call instead of calling `add_bill_item` repeatedly. Use `add_bill_item` for single-item additions or edits.
+     Step 4: If payment method (e.g. UPI, CASH) is specified, call `finalize_bill(bill_id=..., payment_method=...)`.
+     Step 5: Return a clear summary of the bill to the user.
    - Finalizing bills: Only finalize the exact bill ID referenced or in context. Do not invent or select unrelated bills.
 
 5. NATURAL CONVERSATIONAL ENGLISH UNDERSTANDING & CHOICE RESOLUTION:

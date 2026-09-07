@@ -25,7 +25,7 @@ def test_config_development_defaults():
         assert settings.database_url == "sqlite:///./data/kirana.db"
         assert settings.host == "0.0.0.0"
         assert settings.port == 8000
-        assert settings.agent_max_iterations == 8
+        assert settings.agent_max_iterations == 15
         assert settings.timezone == "Asia/Kolkata"
         assert settings.document_storage == "local"
         assert settings.local_document_dir == "generated"

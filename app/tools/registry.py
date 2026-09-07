@@ -33,6 +33,7 @@ from app.tools.schemas import (
     CreateDraftBillInput,
     GetCurrentBillInput,
     AddBillItemInput,
+    AddBillItemsInput,
     UpdateBillItemInput,
     RemoveBillItemInput,
     CalculateBillInput,
@@ -147,6 +148,7 @@ from app.tools.billing import (
     create_draft_bill,
     get_current_bill,
     add_bill_item,
+    add_bill_items,
     update_bill_item,
     remove_bill_item,
     calculate_bill,
@@ -174,7 +176,8 @@ registry.register("get_low_stock", "List all products with low or out‑of‑sto
 # Billing tools
 registry.register("create_draft_bill", "Create a new draft bill (optional customer).", CreateDraftBillInput, create_draft_bill)
 registry.register("get_current_bill", "Fetch a bill by its identifier.", GetCurrentBillInput, get_current_bill)
-registry.register("add_bill_item", "Add a product line item to a draft bill.", AddBillItemInput, add_bill_item)
+registry.register("add_bill_item", "Add a single product line item to a draft bill.", AddBillItemInput, add_bill_item)
+registry.register("add_bill_items", "Add multiple product line items to a draft bill in a single batch operation.", AddBillItemsInput, add_bill_items)
 registry.register("update_bill_item", "Change the quantity of an existing bill line item.", UpdateBillItemInput, update_bill_item)
 registry.register("remove_bill_item", "Remove a line item from a draft bill.", RemoveBillItemInput, remove_bill_item)
 registry.register("calculate_bill", "Re‑calculate totals for a bill (useful after manual edits).", CalculateBillInput, calculate_bill)

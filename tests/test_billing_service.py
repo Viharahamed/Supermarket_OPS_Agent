@@ -19,6 +19,7 @@ from app.services import (
     create_draft_bill,
     get_current_bill,
     add_bill_item,
+    add_bill_items,
     update_bill_item,
     remove_bill_item,
     calculate_bill,
@@ -382,3 +383,68 @@ def test_end_to_end_multi_item_billing_scenario(db_session):
     assert m_sugar is not None and m_sugar.movement_type == "SALE" and m_sugar.quantity == Decimal("-2.00")
     assert m_maggi is not None and m_maggi.movement_type == "SALE" and m_maggi.quantity == Decimal("-6.00")
     assert m_butter is None  # No movement for butter
+
+
+def test_add_bill_items_batch_success(db_session):
+    """Verify batch adding multiple valid items updates bill totals and items deterministically."""
+    p1 = db_session.query(Product).filter_by(sku="SUGR-FINE-1K").first()
+    p2 = db_session.query(Product).filter_by(sku="MAGG-NOOD-70G").first()
+    draft = create_draft_bill(db_session)
+
+    items_to_add = [
+        {"product_id": p1.id, "quantity": Decimal("2.00")},
+        {"product_id": p2.id, "quantity": Decimal("4.00")},
+    ]
+
+    bill_dto = add_bill_items(db_session, draft.id, items_to_add)
+    assert len(bill_dto.items) == 2
+    assert bill_dto.grand_total > Decimal("0.00")
+
+
+def test_add_bill_items_batch_atomic_failure(db_session):
+    """Verify batch addition is atomic: if any item is invalid, 0 items are added."""
+    p1 = db_session.query(Product).filter_by(sku="SUGR-FINE-1K").first()
+    draft = create_draft_bill(db_session)
+
+    items_to_add = [
+        {"product_id": p1.id, "quantity": Decimal("2.00")},
+        {"product_id": 99999, "quantity": Decimal("1.00")},  # Invalid product ID
+    ]
+
+    with pytest.raises(ProductNotFoundError):
+        add_bill_items(db_session, draft.id, items_to_add)
+
+    # Verify no items were added to the draft bill
+    current_bill = get_current_bill(db_session, draft.id)
+    assert len(current_bill.items) == 0
+
+
+def test_add_bill_items_inactive_product_rejection(db_session):
+    """Verify batch addition rejects inactive products atomically."""
+    p1 = db_session.query(Product).filter_by(sku="SUGR-FINE-1K").first()
+    p2 = db_session.query(Product).filter_by(sku="MAGG-NOOD-70G").first()
+    p2.active = False
+    db_session.commit()
+
+    draft = create_draft_bill(db_session)
+    items_to_add = [
+        {"product_id": p1.id, "quantity": Decimal("2.00")},
+        {"product_id": p2.id, "quantity": Decimal("1.00")},
+    ]
+
+    with pytest.raises(ProductInactiveError):
+        add_bill_items(db_session, draft.id, items_to_add)
+
+    current_bill = get_current_bill(db_session, draft.id)
+    assert len(current_bill.items) == 0
+
+
+def test_add_bill_items_finalized_bill_rejection(db_session):
+    """Verify batch addition raises error if bill is already finalized."""
+    p1 = db_session.query(Product).filter_by(sku="SUGR-FINE-1K").first()
+    draft = create_draft_bill(db_session)
+    add_bill_item(db_session, draft.id, p1.id, Decimal("1.00"))
+    finalize_bill(db_session, draft.id, payment_method="CASH")
+
+    with pytest.raises(BillAlreadyFinalizedError):
+        add_bill_items(db_session, draft.id, [{"product_id": p1.id, "quantity": Decimal("1.00")}])

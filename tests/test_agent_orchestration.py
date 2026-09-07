@@ -304,3 +304,56 @@ def test_agent_multiturn_session_option_resolution(seed_orchestration_data):
     agent2 = Agent(llm_client=mock_llm2, tool_registry=registry)
     res2 = agent2.run("2nd one", user_id=user_id)
     assert "Added 2 units" in res2.content
+
+
+# -----------------------------------------------------------------------------
+# 12. Multi-Item 4-Product Billing with Batch Addition & Iteration Limit Verification
+# -----------------------------------------------------------------------------
+def test_agent_orchestration_4_item_bill_with_batch_addition(seed_orchestration_data):
+    """Verify 4-item billing request completes using batch add_bill_items within the 15-iteration limit."""
+    p_maggi = seed_orchestration_data["maggi"]
+    p_sugar = seed_orchestration_data["sugar"]
+    p_oil = seed_orchestration_data["oil"]
+
+    # 4 products searched -> create draft bill -> batch add items -> finalize bill
+    actions = [
+        AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Sugar"}),
+        AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Atta"}),
+        AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Maggi"}),
+        AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Butter"}),
+        AgentAction(action_type="tool_call", tool_name="create_draft_bill", arguments={}),
+        AgentAction(
+            action_type="tool_call",
+            tool_name="add_bill_items",
+            arguments={
+                "bill_id": 1,
+                "items": [
+                    {"product_id": p_sugar.id, "quantity": 2},
+                    {"product_id": p_maggi.id, "quantity": 4},
+                    {"product_id": p_oil.id, "quantity": 1},
+                ],
+            },
+        ),
+        AgentAction(
+            action_type="tool_call",
+            tool_name="finalize_bill",
+            arguments={"bill_id": 1, "payment_method": "UPI"},
+        ),
+        AgentAction(
+            action_type="final_response",
+            content="Finalized Bill #1 for ₹580.00 via UPI containing Sugar, Atta, Maggi, and Butter.",
+        ),
+    ]
+    mock_llm = SequenceMockLLMClient(actions)
+    agent = Agent(llm_client=mock_llm, tool_registry=registry)
+
+    response = agent.run("Make a bill: 2kg sugar, 1 Aashirvaad atta 5kg, 4 Maggi, 1 Amul butter, UPI")
+    assert "Finalized Bill #1" in response.content
+    assert response.metadata.get("status") != "MAX_ITERATIONS_EXCEEDED"
+    assert response.metadata.get("iterations") <= 15
+
+
+def test_agent_max_iterations_is_15():
+    """Verify default Agent max_iterations is set to 15 (up from 8)."""
+    agent = Agent()
+    assert agent.max_iterations == 15

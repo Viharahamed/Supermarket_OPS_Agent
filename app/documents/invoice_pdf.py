@@ -35,6 +35,14 @@ from app.exceptions import (
 )
 
 
+import re
+
+
+def _sanitize_filename(name: str) -> str:
+    """Remove illegal filesystem characters from filename strings."""
+    return re.sub(r'[\\/*?:"<>|]', "", str(name))
+
+
 def _get_invoices_dir() -> Path:
     """Return platform-independent Path object for invoice document storage."""
     settings = get_settings()
@@ -86,13 +94,18 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
     footer_pref = db.query(OwnerPreference).filter(OwnerPreference.key == "receipt_footer").first()
     receipt_footer = footer_pref.value if footer_pref else "Thank you for shopping with us! Visit again."
 
-    # 3. Ensure output directory exists
-    invoices_dir = _get_invoices_dir()
-    file_path = invoices_dir / f"invoice_{bill.id}.pdf"
+    # 3. Build safe relative storage filename and BytesIO memory buffer
+    safe_bill_num = _sanitize_filename(bill.bill_number or bill.id)
+    relative_path = f"invoices/invoice_{safe_bill_num}.pdf"
+
+    import io
+    from app.storage import get_storage
+
+    pdf_buffer = io.BytesIO()
 
     try:
         doc = SimpleDocTemplate(
-            str(file_path),
+            pdf_buffer,
             pagesize=A4,
             leftMargin=30,
             rightMargin=30,
@@ -212,17 +225,22 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
         table_data = [headers]
 
         for i, item in enumerate(bill.items, start=1):
+            if item.quantity % 1 == 0:
+                qty_str = f"{int(item.quantity)}"
+            else:
+                qty_str = f"{item.quantity:.2f}"
+
             row = [
                 Paragraph(str(i), ParagraphStyle("CenterCell", parent=tbl_cell_style, alignment=1)),
                 Paragraph(item.product_name_snapshot, tbl_cell_style),
                 Paragraph(item.hsn_code or "-", ParagraphStyle("CenterCell", parent=tbl_cell_style, alignment=1)),
-                Paragraph(f"{item.quantity:.2f}", ParagraphStyle("CenterCell", parent=tbl_cell_style, alignment=1)),
-                Paragraph(f"{item.unit_price:.2f}", tbl_cell_right),
-                Paragraph(f"{item.taxable_amount:.2f}", tbl_cell_right),
+                Paragraph(qty_str, ParagraphStyle("CenterCell", parent=tbl_cell_style, alignment=1)),
+                Paragraph(f"{item.unit_price:,.2f}", tbl_cell_right),
+                Paragraph(f"{item.taxable_amount:,.2f}", tbl_cell_right),
                 Paragraph(f"{item.gst_rate:.1f}%", ParagraphStyle("CenterCell", parent=tbl_cell_style, alignment=1)),
-                Paragraph(f"{item.cgst:.2f}", tbl_cell_right),
-                Paragraph(f"{item.sgst:.2f}", tbl_cell_right),
-                Paragraph(f"{item.line_total:.2f}", tbl_cell_right),
+                Paragraph(f"{item.cgst:,.2f}", tbl_cell_right),
+                Paragraph(f"{item.sgst:,.2f}", tbl_cell_right),
+                Paragraph(f"{item.line_total:,.2f}", tbl_cell_right),
             ]
             table_data.append(row)
 
@@ -242,13 +260,13 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
 
         # Tax & Grand Totals Block
         summary_data = [
-            [Paragraph("Taxable Amount:", heading_bold), Paragraph(f"₹ {bill.taxable_amount:.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
-            [Paragraph("CGST Total:", heading_bold), Paragraph(f"₹ {bill.cgst_amount:.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
-            [Paragraph("SGST Total:", heading_bold), Paragraph(f"₹ {bill.sgst_amount:.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
-            [Paragraph("Total GST Tax:", heading_bold), Paragraph(f"₹ {bill.tax_total:.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
+            [Paragraph("Taxable Amount:", heading_bold), Paragraph(f"₹ {bill.taxable_amount:,.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
+            [Paragraph("CGST Total:", heading_bold), Paragraph(f"₹ {bill.cgst_amount:,.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
+            [Paragraph("SGST Total:", heading_bold), Paragraph(f"₹ {bill.sgst_amount:,.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
+            [Paragraph("Total GST Tax:", heading_bold), Paragraph(f"₹ {bill.tax_total:,.2f}", ParagraphStyle("SumR", parent=text_style, alignment=2))],
             [
                 Paragraph("<b>GRAND TOTAL:</b>", ParagraphStyle("GT", parent=heading_bold, fontSize=11, textColor=colors.HexColor("#1A365D"))),
-                Paragraph(f"<b>₹ {bill.grand_total:.2f}</b>", ParagraphStyle("GTR", parent=text_style, fontSize=11, alignment=2, textColor=colors.HexColor("#1A365D"))),
+                Paragraph(f"<b>₹ {bill.grand_total:,.2f}</b>", ParagraphStyle("GTR", parent=text_style, fontSize=11, alignment=2, textColor=colors.HexColor("#1A365D"))),
             ],
         ]
         summary_table = Table(summary_data, colWidths=[140, 95])
@@ -273,10 +291,20 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
 
         doc.build(elements)
 
+        pdf_bytes = pdf_buffer.getvalue()
+        storage = get_storage()
+        result = storage.save(
+            content=pdf_bytes,
+            relative_path=relative_path,
+            artifact_type="invoice_pdf",
+            content_type="application/pdf",
+        )
+
         return {
             "success": True,
-            "file_path": str(file_path.resolve()),
-            "file_name": file_path.name,
+            "file_path": result.file_path,
+            "file_name": result.file_name,
+            "relative_path": result.relative_path,
             "bill_id": bill.id,
             "bill_number": bill.bill_number,
             "grand_total": f"{bill.grand_total:.2f}",

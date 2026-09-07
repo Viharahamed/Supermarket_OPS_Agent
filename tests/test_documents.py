@@ -1,29 +1,30 @@
 # tests/test_documents.py
-"""Tests for Phase 13 Document Generation & Telegram Delivery.
+"""Tests for Phase 13B.1 Document Generation Hardening & Telegram Delivery.
 
-Tests PDF invoice generation, PPTX sales presentation creation, tool registry integration,
-and Telegram document attachment delivery.
+Tests PDF invoice generation, PDF magic header validation, financial correctness,
+fractional quantity formatting, PPTX sales presentation slide inspection,
+empty-data presentation handling, tool registry integration, and Telegram document delivery.
 """
 
 from decimal import Decimal
 import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from pptx import Presentation
 
 from app.db.database import get_db_context
 from app.db.models import Product, Bill, BillItem, Customer
-from app.documents.invoice_pdf import generate_invoice_pdf
+from app.documents.invoice_pdf import generate_invoice_pdf, _sanitize_filename
 from app.documents.sales_pptx import generate_sales_analysis_pptx
 from app.exceptions import BillNotFoundError, BillNotFinalizedError
 from app.services.billing_service import create_draft_bill, add_bill_item, finalize_bill
 from app.services.inventory_service import create_product
 from app.tools import registry
-from pptx import Presentation
 
 
 @pytest.fixture
 def setup_finalized_bill(db_session):
-    """Fixture to create a product, customer, draft bill, and finalized bill."""
+    """Fixture to create products, customer, draft bill, and finalized bill with mixed GST rates."""
     p1 = create_product(
         name="Tata Salt 1kg",
         sku="SALT-TATA-1KG",
@@ -76,6 +77,42 @@ def test_generate_invoice_pdf_success(setup_finalized_bill):
     assert res["file_name"].endswith(".pdf")
     assert os.path.getsize(res["file_path"]) > 1000  # Non-trivial PDF size
 
+    # Verify PDF magic header bytes (%PDF-)
+    with open(res["file_path"], "rb") as f:
+        header = f.read(4)
+        assert header == b"%PDF"
+
+
+def test_generate_invoice_pdf_financial_correctness(setup_finalized_bill):
+    """Verify generated PDF invoice returns exact grand total matching DB entity."""
+    final_bill, bill_id = setup_finalized_bill
+
+    res = generate_invoice_pdf(bill_id)
+    assert Decimal(res["grand_total"]) == final_bill.grand_total
+    assert res["payment_method"] == "CASH"
+
+
+def test_generate_invoice_pdf_fractional_quantity(db_session):
+    """Verify PDF invoice generation with fractional item quantity (e.g. 0.5 kg)."""
+    p = create_product(
+        name="Loose Sugar 1kg",
+        sku="SUGAR-LOOSE-1KG",
+        category="Grocery",
+        cost_price=Decimal("35.00"),
+        mrp=Decimal("45.00"),
+        selling_price=Decimal("40.00"),
+        stock_quantity=Decimal("50.00"),
+        unit="kg",
+        is_loose=True,
+    )
+    draft = create_draft_bill()
+    draft = add_bill_item(draft.id, p.id, Decimal("0.50"))
+    finalized = finalize_bill(draft.id, payment_method="UPI")
+
+    res = generate_invoice_pdf(finalized.id)
+    assert os.path.exists(res["file_path"])
+    assert res["grand_total"] == f"{finalized.grand_total:.2f}"
+
 
 def test_generate_invoice_pdf_draft_fails(db_session):
     """Test that generating PDF for a draft bill raises BillNotFinalizedError."""
@@ -93,6 +130,20 @@ def test_generate_invoice_pdf_not_found(db_session):
         generate_invoice_pdf(99999)
 
 
+def test_sanitize_filename_utility():
+    """Verify filename sanitization removes dangerous/illegal characters."""
+    unsafe = "BILL/2026:09*07?<1001>|win"
+    clean = _sanitize_filename(unsafe)
+    assert "/" not in clean
+    assert ":" not in clean
+    assert "*" not in clean
+    assert "?" not in clean
+    assert "<" not in clean
+    assert ">" not in clean
+    assert "|" not in clean
+    assert clean == "BILL202609071001win"
+
+
 # -----------------------------------------------------------------------------
 # PPTX Sales Presentation Tests
 # -----------------------------------------------------------------------------
@@ -107,10 +158,21 @@ def test_generate_sales_analysis_pptx_success(setup_finalized_bill):
     assert res["file_name"].endswith(".pptx")
     assert os.path.getsize(file_path) > 5000
 
-    # Verify slide count using python-pptx
+    # Verify slide count & structure using python-pptx
     prs = Presentation(file_path)
     assert len(prs.slides) == 8
     assert res["slides_count"] == 8
+
+    # Inspect slide titles
+    slide_titles = []
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text:
+                slide_titles.append(shape.text_frame.text)
+                break
+
+    assert any("sales" in t.lower() and "analysis" in t.lower() for t in slide_titles)
+    assert any("executive" in t.lower() for t in slide_titles)
 
 
 def test_generate_sales_analysis_pptx_empty_data(db_session):

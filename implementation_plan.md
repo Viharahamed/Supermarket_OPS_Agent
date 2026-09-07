@@ -1,85 +1,76 @@
-# Implementation Plan — Phase 13A.6: Railway Deployment Preparation
+# Implementation Plan — Phase 13B.2: Production Document Storage & Persistence
 
-Prepare the existing Kirana AI Agent codebase for production deployment on **Railway**. This phase configures environment-driven runtime settings (`PORT`, `HOST`), standardizes PostgreSQL database URL handling (`postgres://` / `postgresql://` -> `postgresql+psycopg://`), defines Railway configuration manifests (`railway.toml`, `Procfile`), enforces platform-independent document storage paths, and preserves explicit database migrations (`alembic upgrade head`) and liveness monitoring (`/health`).
+Implement a clean, decoupled document storage abstraction layer (`app/storage/`) to make PDF/PPTX artifact storage production-ready for local development and persistent Railway Volume mounts.
 
 ---
 
 ## User Review Required
 
 > [!IMPORTANT]
-> 1. **Railway Service Architecture**: The primary Railway application service runs FastAPI (`uvicorn app.api.main:app --host 0.0.0.0 --port $PORT`). Telegram bot polling remains a separate entry point (`python run_bot.py`) and is not auto-started inside the web service.
-> 2. **Explicit Database Migrations**: Migrations are **NOT** automatically executed during FastAPI startup. Migrations must be run explicitly via `railway run alembic upgrade head` (or connected terminal execution).
-> 3. **Database Driver Transformation**: Railway provides `DATABASE_URL` in `postgres://` or `postgresql://` format. The application database layer automatically normalizes this string to `postgresql+psycopg://` to transparently use the `psycopg` (v3) driver.
-> 4. **No Docker / No Redis / No Webhooks / No Cloud Storage**: Docker, Redis, Celery, Telegram webhooks, and S3/Blob storage remain strictly out of scope for Phase 13A.6.
-
----
-
-## Open Questions
-
-None. Railway environment and configuration requirements are fully specified.
+> 1. **Decoupled Document Storage**: Document generators (`invoice_pdf.py`, `sales_pptx.py`) produce binary data into memory buffers (`io.BytesIO()`) and store artifacts via `DocumentStorage` abstraction without direct filesystem coupling.
+> 2. **Railway Persistent Storage Strategy**: Uses `DOCUMENT_STORAGE=local` with `LOCAL_DOCUMENT_DIR=/app/data/generated`. Persistence on Railway is provided by mounting a Railway Volume at the configured mount path. No Railway SDK or cloud API calls are used.
+> 3. **Path Security & Validation**: Anti-path-traversal protection strictly rejects absolute paths, null bytes (`\0`), drive letters/schemes (`:`), `../`, and `..\` relative sequences (`InvalidStoragePathError`).
+> 4. **No Binary Data in PostgreSQL**: PostgreSQL remains the source of truth for authoritative business data (bills, inventory, reporting, customers). Binaries are stored strictly in document storage.
+> 5. **Scope Boundaries**: No cloud storage SDKs (S3, GCS, Azure Blob), no Redis, no Telegram webhooks, no auth.
 
 ---
 
 ## Proposed Changes
 
-### Core Engine & Database Layer
+### Storage Domain Package
 
-#### [MODIFY] [app/db/database.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/db/database.py)
-- Normalize `postgres://` and `postgresql://` URLs in `_configure_engine` to `postgresql+psycopg://` to support Railway default connection strings cleanly.
+#### [NEW] [app/storage/base.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/storage/base.py)
+- Abstract base class `DocumentStorage` defining `save`, `read`, `exists`, `delete`, and `get_path`.
+
+#### [NEW] [app/storage/schemas.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/storage/schemas.py)
+- Pydantic schema `ArtifactResult` containing `artifact_type`, `file_name`, `file_path`, `relative_path`, `content_type`, `size_bytes`.
+
+#### [NEW] [app/storage/local.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/storage/local.py)
+- Concrete implementation `LocalStorageBackend(DocumentStorage)` using `pathlib.Path`.
+- Strict path traversal validation in `_validate_relative_path()`.
+
+#### [NEW] [app/storage/factory.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/storage/factory.py)
+- Singleton & parameterized factory function `get_storage(storage_type, base_dir)` and `set_storage()`.
+
+#### [NEW] [app/storage/__init__.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/storage/__init__.py)
+- Module exports.
+
+---
+
+### Application Exceptions & Document Generators
+
+#### [MODIFY] [app/exceptions.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/exceptions.py)
+- Add `DocumentStorageError`, `InvalidStoragePathError`, `DocumentWriteError`, `DocumentReadError`, `DocumentDeleteError`.
+- Refine `DocumentNotFoundError` to inherit from `DocumentStorageError`.
+
+#### [MODIFY] [app/documents/invoice_pdf.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/documents/invoice_pdf.py)
+- Refactor ReportLab generation to write into `io.BytesIO()` memory buffer.
+- Store PDF binary via `get_storage().save()`.
 
 #### [MODIFY] [app/documents/sales_pptx.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/documents/sales_pptx.py)
-#### [MODIFY] [app/documents/invoice_pdf.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/documents/invoice_pdf.py)
-- Dynamic resolution of document directories (`invoices`, `reports`) from `settings.local_document_dir` with cross-platform `pathlib.Path` handling and safe `mkdir(parents=True, exist_ok=True)` directory creation.
+- Render Matplotlib charts inside `tempfile.TemporaryDirectory()`.
+- Write PowerPoint presentation into `io.BytesIO()` memory buffer and store via `get_storage().save()`.
+
+#### [MODIFY] [app/telegram/handlers.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/app/telegram/handlers.py)
+- Use `get_storage()` to resolve and send generated document attachments.
 
 ---
 
-### Deployment Manifests & Configuration
+### Test Suite & Documentation
 
-#### [NEW] [railway.toml](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/railway.toml)
-- Define Nixpacks build and deployment configuration:
-  - `startCommand = "uvicorn app.api.main:app --host 0.0.0.0 --port $PORT"`
-  - `healthcheckPath = "/health"`
-  - `healthcheckTimeout = 100`
-
-#### [NEW] [Procfile](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/Procfile)
-- Define process entry point:
-  `web: uvicorn app.api.main:app --host 0.0.0.0 --port $PORT`
-
-#### [MODIFY] [.env.example](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/.env.example)
-- Add Railway deployment documentation comments for `PORT` and PostgreSQL connection strings.
-
----
-
-### Documentation & Verification Suite
-
-#### [NEW] [tests/test_railway_config.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/tests/test_railway_config.py)
-- Unit test suite verifying:
-  - Database URL normalization for Railway format (`postgres://...` -> `postgresql+psycopg://...`).
-  - Production environment validation (`APP_ENV=production`, `DEBUG=false`).
-  - `PORT` environment setting override.
-  - Platform-independent document storage path generation.
-  - Health check endpoint `/health` liveness.
+#### [NEW] [tests/test_storage.py](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/tests/test_storage.py)
+- Comprehensive test coverage for local storage backend: binary save/read, existence checks, deletion, missing artifact exceptions, nested directory creation, path traversal rejection (`../`, `..\`, null bytes, absolute paths), binary content preservation, overwrite behavior, and custom directory configuration.
 
 #### [MODIFY] [README.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/README.md)
-- Add **Railway Deployment (Phase 13A.6)** section detailing:
-  - GitHub repository connection & Railway project setup.
-  - Railway PostgreSQL provisioning & `DATABASE_URL` linking.
-  - Required environment variables (`APP_ENV`, `LLM_PROVIDER`, `OPENROUTER_API_KEY`, etc.).
-  - Explicit Alembic migration workflow (`railway run alembic upgrade head`).
-  - Monitoring `/health` and `/ready` endpoints.
+- Document Phase 13B.2 Document Storage & Persistence architecture, Railway persistent Volume setup guide, environment settings, and anti-path-traversal security.
 
 ---
 
 ## Verification Plan
 
 ### Automated Tests
-1. Run full test suite:
+1. Run pytest suite:
    ```powershell
    pytest -v
    ```
-2. Verify all existing tests pass alongside new `tests/test_railway_config.py` unit tests (target: 154+ passed).
-
-### Manual Verification
-1. Validate `railway.toml` syntax and `Procfile` presence.
-2. Confirm `.env` remains untracked and uncommitted.
-3. Check `git status` for clean git diff.
+2. Verify all storage tests in `tests/test_storage.py` and document integration tests in `tests/test_documents.py` pass cleanly.

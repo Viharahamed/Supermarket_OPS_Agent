@@ -303,6 +303,82 @@ The Kirana AI Agent is prepared for production deployment on **Railway**.
 > [!IMPORTANT]
 > Database schema migrations are **explicit** operations and are **not** auto-executed during FastAPI startup. Telegram polling remains decoupled from the web application process.
 
+---
+
+## 🛑 Architectural Note: Redis Evaluation (Phase 13A.7)
+
+During Phase 13A.7, a formal architectural evaluation concluded that **Redis is intentionally NOT part of the current production stack**.
+
+- **PostgreSQL is Authoritative**: PostgreSQL 16+ provides complete ACID transaction atomicity, row-level stock locks, and session/preference durability.
+- **Minimal Operational Overhead**: Query response times for inventory and sessions are `< 2ms`, rendering caching unnecessary for current retail operational volumes.
+- **Future Reconsideration**: Redis may be reconsidered if specific scaling requirements emerge (e.g. 5+ API replicas, heavy async worker queues, or distributed rate limiting).
+
+For full details, see the Architectural Decision Record: [docs/architecture/redis-decision.md](file:///c:/Users/vihar/Music/Projects/kirana-ai-agent/docs/architecture/redis-decision.md).
+
+---
+
+## 📂 Document Storage & Persistence (Phase 13B.2)
+
+The Kirana AI Agent uses a clean document storage abstraction (`app/storage/`) to manage PDF invoices, PPTX presentation decks, and report artifacts.
+
+### 🏗️ Conceptual Architecture
+
+```
+                 Document Generators (PDF / PPTX)
+                                |
+                                v
+                         Artifact Result
+                                |
+                                v
+                     DocumentStorage Interface
+                                |
+             +------------------+------------------+
+             |                                     |
+             v                                     v
+      Local Development                     Railway Production
+   (LocalStorageBackend)                  (LocalStorageBackend)
+             |                                     |
+             v                                     v
+   Local Filesystem Path               Persistent Railway Volume Mount
+   (LOCAL_DOCUMENT_DIR=generated)      (LOCAL_DOCUMENT_DIR=/app/data/generated)
+```
+
+### ⚙️ Configuration & Environment
+
+Storage configuration is managed via `app/config.py`:
+
+- **Development (`DOCUMENT_STORAGE=local`)**:
+  ```env
+  DOCUMENT_STORAGE=local
+  LOCAL_DOCUMENT_DIR=generated
+  ```
+  Writes generated artifacts to the local `./generated/` directory.
+
+- **Railway Production (`DOCUMENT_STORAGE=local`)**:
+  ```env
+  DOCUMENT_STORAGE=local
+  LOCAL_DOCUMENT_DIR=/app/data/generated
+  ```
+  *(Note: `DOCUMENT_STORAGE=local` indicates a filesystem-backed implementation; persistence in Railway production is provided by the mounted Railway Volume).*
+
+### 🚂 Railway Volume Setup Guide
+
+1. Open your Railway Project Dashboard.
+2. Select your Kirana AI Agent service.
+3. Click **Add Volume** under service settings.
+4. Mount the volume to path: `/app/data/generated`.
+5. Set environment variable `LOCAL_DOCUMENT_DIR=/app/data/generated`.
+6. Generated PDFs and PPTX presentations will automatically survive service restarts and redeployments.
+
+### 🔒 Storage Security & Integrity
+
+- **Path Traversal Prevention**: Storage backends strictly reject absolute paths, null bytes, `../`, and `..\` relative sequences (`InvalidStoragePathError`).
+- **Binary Support**: Native binary handling (`.pdf`, `.pptx`, `.png`).
+- **Database vs. Storage Separation**: PostgreSQL stores authoritative business data (bills, items, inventory). Binary files are stored exclusively in document storage.
+- **Future Object Storage**: S3/GCS object storage backends can be added behind the `DocumentStorage` interface without modifying generators, tools, or Telegram handlers.
+
+
+
 
 
 

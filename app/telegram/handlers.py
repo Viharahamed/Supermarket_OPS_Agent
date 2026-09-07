@@ -236,17 +236,28 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 for plain_chunk in plain_chunks:
                     await update.message.reply_text(plain_chunk)
 
-        # Deliver generated document attachments (.pdf, .pptx) if present in tool execution results
+        # Deliver generated document attachments (.pdf, .pptx) using storage abstraction
         if agent_response.metadata and "tool_results" in agent_response.metadata:
+            from app.storage import get_storage
+            storage = get_storage()
+
             for tr in agent_response.metadata["tool_results"]:
                 data = tr.get("data")
-                if isinstance(data, dict) and "file_path" in data:
-                    fpath = data["file_path"]
-                    if os.path.exists(fpath):
-                        fname = data.get("file_name", os.path.basename(fpath))
+                if isinstance(data, dict):
+                    rel_path = data.get("relative_path")
+                    fpath = data.get("file_path")
+
+                    target_file_path = None
+                    if rel_path and storage.exists(rel_path):
+                        target_file_path = storage.get_path(rel_path)
+                    elif fpath and os.path.exists(fpath):
+                        target_file_path = fpath
+
+                    if target_file_path:
+                        fname = data.get("file_name", os.path.basename(target_file_path))
                         caption = f"📄 <b>Generated Document:</b> <code>{escape_html_text(fname)}</code>"
                         try:
-                            with open(fpath, "rb") as doc_file:
+                            with open(target_file_path, "rb") as doc_file:
                                 await update.message.reply_document(
                                     document=doc_file,
                                     filename=fname,
@@ -255,7 +266,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                                 )
                                 logger.info(f"Successfully sent Telegram document attachment: {fname}")
                         except Exception as doc_err:
-                            logger.error(f"Failed to send Telegram document attachment '{fpath}': {doc_err}")
+                            logger.error(f"Failed to send Telegram document attachment '{target_file_path}': {doc_err}")
 
     except Exception as exc:
         elapsed = time.time() - start_time

@@ -66,7 +66,14 @@ def generate_sales_analysis_pptx(
     """Generate an 8-slide PowerPoint Sales Analysis presentation."""
     start_date_str = start_date_str or start_date
     end_date_str = end_date_str or end_date
-    today = date.today()
+    settings = get_settings()
+
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(settings.timezone)
+        today = datetime.now(tz).date()
+    except Exception:
+        today = date.today()
 
     if end_date_str:
         end_d = parse_date(end_date_str)
@@ -121,6 +128,9 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
         curr += timedelta(days=1)
 
     # 4. Render Matplotlib Charts
+    import io
+    from app.storage import get_storage
+
     reports_dir, temp_charts_dir = _get_reports_dirs()
     daily_chart_path = create_daily_sales_chart(daily_sales_data, temp_charts_dir / "daily_sales.png")
     
@@ -407,16 +417,28 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
         p_ins.font.size = Pt(12)
         p_ins.font.color.rgb = RGBColor(45, 55, 72)
 
-    # 6. Save PPTX File
+    # 6. Save PPTX to BytesIO buffer
+    pptx_buffer = io.BytesIO()
+    prs.save(pptx_buffer)
+    pptx_bytes = pptx_buffer.getvalue()
+
+    # 7. Store binary presentation using DocumentStorage abstraction
     file_name = f"sales_analysis_{start_d.isoformat()}_{end_d.isoformat()}.pptx"
-    file_path = reports_dir / file_name
+    relative_path = f"reports/{file_name}"
 
     try:
-        prs.save(str(file_path))
+        storage = get_storage()
+        result = storage.save(
+            content=pptx_bytes,
+            relative_path=relative_path,
+            artifact_type="sales_pptx",
+            content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        )
         return {
             "success": True,
-            "file_path": str(file_path.resolve()),
-            "file_name": file_name,
+            "file_path": result.file_path,
+            "file_name": result.file_name,
+            "relative_path": result.relative_path,
             "start_date": start_d.isoformat(),
             "end_date": end_d.isoformat(),
             "total_sales": f"{summary_report.total_sales:.2f}",

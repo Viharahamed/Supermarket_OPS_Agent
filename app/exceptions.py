@@ -143,10 +143,37 @@ class DocumentGenerationError(KiranaException):
         super().__init__(message, code="DOCUMENT_GENERATION_FAILED")
 
 
-class DocumentNotFoundError(KiranaException):
+class DocumentStorageError(KiranaException):
+    """Base exception for document storage operations."""
+    def __init__(self, message: str = "Document storage error occurred.", code: str = "DOCUMENT_STORAGE_ERROR"):
+        super().__init__(message, code=code)
+
+
+class DocumentNotFoundError(DocumentStorageError):
     def __init__(self, file_path: str):
         super().__init__(f"Document file at '{file_path}' was not found.", code="DOCUMENT_NOT_FOUND")
         self.file_path = file_path
+
+
+class InvalidStoragePathError(DocumentStorageError):
+    def __init__(self, path: str, reason: str = "Path validation failed"):
+        super().__init__(f"Invalid storage path '{path}': {reason}.", code="INVALID_STORAGE_PATH")
+        self.path = path
+
+
+class DocumentWriteError(DocumentStorageError):
+    def __init__(self, message: str = "Failed to write document to storage."):
+        super().__init__(message, code="DOCUMENT_WRITE_FAILED")
+
+
+class DocumentReadError(DocumentStorageError):
+    def __init__(self, message: str = "Failed to read document from storage."):
+        super().__init__(message, code="DOCUMENT_READ_FAILED")
+
+
+class DocumentDeleteError(DocumentStorageError):
+    def __init__(self, message: str = "Failed to delete document from storage."):
+        super().__init__(message, code="DOCUMENT_DELETE_FAILED")
 
 
 class EmptyBillError(BillingError):

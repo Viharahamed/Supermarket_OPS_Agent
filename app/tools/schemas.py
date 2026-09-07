@@ -69,6 +69,7 @@ class ReceiveStockInput(BaseModel):
     mrp: Decimal
     reference: Optional[str] = None
     notes: Optional[str] = None
+    query_phrase: Optional[str] = Field(None, description="Exact search query phrase used to search for and resolve this product.")
 
     @field_validator("quantity", "cost_price", "mrp")
     @classmethod
@@ -85,6 +86,7 @@ class AdjustStockInput(BaseModel):
     quantity_change: Decimal
     reason: str
     reference: Optional[str] = None
+    query_phrase: Optional[str] = Field(None, description="Exact search query phrase used to search for and resolve this product.")
 
     @field_validator("quantity_change")
     @classmethod
@@ -130,6 +132,7 @@ class AddBillItemInput(BaseModel):
     bill_id: int
     product_id: int
     quantity: Decimal
+    query_phrase: Optional[str] = Field(None, description="Exact search query phrase used to search for and resolve this product.")
 
     @field_validator("quantity")
     @classmethod
@@ -144,6 +147,7 @@ class AddBillItemInput(BaseModel):
 class BatchBillItemInput(BaseModel):
     product_id: int = Field(..., description="Database product ID to add")
     quantity: Decimal = Field(..., description="Quantity to add (must be > 0)")
+    query_phrase: Optional[str] = Field(None, description="Exact search query phrase used to search for and resolve this product.")
 
     @field_validator("quantity")
     @classmethod
@@ -153,6 +157,7 @@ class BatchBillItemInput(BaseModel):
         return v
 
     model_config = ConfigDict(extra="forbid")
+
 
 
 class AddBillItemsInput(BaseModel):

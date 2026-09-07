@@ -16,7 +16,7 @@ Tests the AI Agent implementation across 9 core dimensions:
 
 from decimal import Decimal
 import json
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 import uuid
 
 import pytest
@@ -162,7 +162,7 @@ def test_agent_multi_turn_react_loop_execution():
 
     assert response.content == "Amul Butter 500g is currently in stock with 15 units available."
     assert response.metadata["iterations"] == 2
-    mock_registry.execute.assert_called_once_with("search_products", {"query": "Amul Butter"}, context=None)
+    mock_registry.execute.assert_called_once_with("search_products", {"query": "Amul Butter"}, context=ANY)
 
 
 
@@ -259,11 +259,13 @@ def test_agent_end_to_end_real_db_tool_execution():
     unique_sku = f"MAGGI-{uuid.uuid4().hex[:8].upper()}"
     
     with get_db_context() as db:
-        from app.auth.service import get_or_create_default_store
-        get_or_create_default_store(db)
+        from app.auth import ToolExecutionContext, bootstrap_store_and_user
+        principal = bootstrap_store_and_user(store_name="Eval Store", telegram_user_id=77801, db=db)
+        ctx = ToolExecutionContext(principal=principal, db=db)
 
         # Seed test product directly into database with unique SKU
         prod = Product(
+            store_id=principal.store_id,
             sku=unique_sku,
             name="Agent Eval Maggi 70g",
 
@@ -285,7 +287,7 @@ def test_agent_end_to_end_real_db_tool_execution():
         db.refresh(prod)
 
         # Create draft bill first to get dynamic bill ID
-        res = default_registry.execute("create_draft_bill", {})
+        res = default_registry.execute("create_draft_bill", {}, context=ctx)
         assert res.success
         bill_id = res.data["id"]
 
@@ -304,7 +306,7 @@ def test_agent_end_to_end_real_db_tool_execution():
             AgentAction(
                 action_type="tool_call",
                 tool_name="add_bill_item",
-                arguments={"bill_id": bill_id, "product_id": prod.id, "quantity": 10},
+                arguments={"bill_id": bill_id, "product_id": prod.id, "quantity": 10, "query_phrase": "Maggi 70g"},
             ),
             AgentAction(
                 action_type="tool_call",
@@ -318,7 +320,7 @@ def test_agent_end_to_end_real_db_tool_execution():
         ]
 
         agent = Agent(llm_client=mock_llm, tool_registry=default_registry)
-        response = agent.run("Sell 10 packs of Maggi 70g for cash")
+        response = agent.run("Sell 10 packs of Maggi 70g for cash", context=ctx)
 
         assert response.metadata["iterations"] == 4
         assert f"Successfully finalized Bill #{bill_id}" in response.content

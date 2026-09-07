@@ -109,14 +109,14 @@ def test_concurrent_receive_stock():
         product_id = product.id
 
     def worker(qty):
-        for _ in range(5):
+        for _ in range(15):
             try:
                 with db_mod.SessionLocal() as db:
                     receive_stock(db, product_id, quantity=qty, cost_price=Decimal("9.00"), mrp=Decimal("14.00"))
                 break
             except Exception:
                 import time
-                time.sleep(0.2)
+                time.sleep(0.1)
 
     import threading
     t1 = threading.Thread(target=worker, args=(5,))
@@ -142,14 +142,14 @@ def test_concurrent_adjust_stock():
         product_id = product.id
 
     def worker(change, reason):
-        for _ in range(5):
+        for _ in range(15):
             try:
                 with db_mod.SessionLocal() as db:
                     adjust_stock(db, product_id, quantity_change=change, reason=reason)
                 break
             except Exception:
                 import time
-                time.sleep(0.2)
+                time.sleep(0.1)
 
     import threading
     t1 = threading.Thread(target=worker, args=(Decimal("15.00"), "Received shipment"))

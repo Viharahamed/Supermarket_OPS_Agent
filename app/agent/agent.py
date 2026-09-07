@@ -103,8 +103,20 @@ class Agent:
                     user_id=effective_user_id,
                     store_id=effective_store_id,
                     role="OPERATOR",
-                )
+                ),
+                user_message=user_message,
             )
+        elif context:
+            context.user_message = user_message
+
+        if context:
+            if hasattr(context, "grounded_product_ids") and context.grounded_product_ids is None:
+                context.grounded_product_ids = set()
+            if hasattr(context, "grounded_product_queries") and context.grounded_product_queries is None:
+                context.grounded_product_queries = {}
+
+
+
 
         logger.info(f"--- Starting Agent Execution query: '{user_message}' (user_id={effective_user_id}, store_id={effective_store_id}) ---")
         system_prompt = self._build_system_prompt()

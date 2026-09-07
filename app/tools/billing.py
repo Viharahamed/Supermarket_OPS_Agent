@@ -8,6 +8,8 @@ Each function accepts the validated Pydantic input model from
 from typing import Any, Optional
 import uuid
 
+from app.exceptions import ProductNotGroundedError
+from app.tools.inventory import _validate_product_grounding
 from app.services.billing_service import (
     create_draft_bill as svc_create_draft_bill,
     get_current_bill as svc_get_current_bill,
@@ -58,6 +60,7 @@ def get_current_bill(inp: GetCurrentBillInput, context: Optional[Any] = None) ->
 
 
 def add_bill_item(inp: AddBillItemInput, context: Optional[Any] = None) -> dict:
+    _validate_product_grounding(inp.product_id, getattr(inp, "query_phrase", None), context)
     store_id = _extract_store_id(context)
     with get_db_context() as db:
         result = svc_add_bill_item(db, inp.bill_id, inp.product_id, inp.quantity, store_id=store_id)
@@ -65,6 +68,8 @@ def add_bill_item(inp: AddBillItemInput, context: Optional[Any] = None) -> dict:
 
 
 def add_bill_items(inp: AddBillItemsInput, context: Optional[Any] = None) -> dict:
+    for item in inp.items:
+        _validate_product_grounding(item.product_id, getattr(item, "query_phrase", None), context)
     store_id = _extract_store_id(context)
     items_list = [{"product_id": item.product_id, "quantity": item.quantity} for item in inp.items]
     with get_db_context() as db:
@@ -77,6 +82,7 @@ def update_bill_item(inp: UpdateBillItemInput, context: Optional[Any] = None) ->
     with get_db_context() as db:
         result = svc_update_bill_item(db, inp.bill_id, inp.item_id, inp.quantity, store_id=store_id)
     return result.model_dump() if hasattr(result, "model_dump") else dict(result)
+
 
 
 def remove_bill_item(inp: RemoveBillItemInput, context: Optional[Any] = None) -> dict:

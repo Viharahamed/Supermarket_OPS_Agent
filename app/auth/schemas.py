@@ -1,5 +1,5 @@
 """Authentication and Principal schemas for Kirana AI Agent."""
-from typing import Any, Optional
+from typing import Any, Dict, Optional, Set
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -16,5 +16,8 @@ class ToolExecutionContext(BaseModel):
     """Trusted execution context passed into tool execution handlers."""
     principal: AuthenticatedPrincipal = Field(..., description="Authenticated principal executing the tool")
     db: Optional[Any] = Field(None, description="Optional SQLAlchemy database session")
+    user_message: Optional[str] = Field(None, description="Original user prompt text for current run")
+    grounded_product_ids: Set[int] = Field(default_factory=set, description="Product IDs grounded via search_products in the current run")
+    grounded_product_queries: Dict[int, Set[str]] = Field(default_factory=dict, description="Map of product_id -> set of normalized queries that returned it")
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

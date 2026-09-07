@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -82,7 +82,7 @@ def test_agent_run_multi_step_tool_execution():
 
     assert response.content == "Found Amul Taaza Milk in inventory."
     assert response.metadata["iterations"] == 2
-    mock_registry.execute.assert_called_once_with("search_products", {"query": "Milk"}, context=None)
+    mock_registry.execute.assert_called_once_with("search_products", {"query": "Milk"}, context=ANY)
 
 
 
@@ -270,9 +270,13 @@ def test_agent_orchestration_multi_step_draft_billing_dynamic_bill_id(db_session
     def mock_generate_action(system_prompt, messages):
         nonlocal created_bill_id
         if len(messages) == 1:
-            return AgentAction(action_type="tool_call", tool_name="create_draft_bill", arguments={})
+            return AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "sugar"})
         elif len(messages) == 3:
-            # Extract dynamic bill ID from DB created in iteration 1
+            return AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Maggi"})
+        elif len(messages) == 5:
+            return AgentAction(action_type="tool_call", tool_name="create_draft_bill", arguments={})
+        elif len(messages) == 7:
+            # Extract dynamic bill ID from DB created in iteration 3
             bill_rec = db_session.query(Bill).filter(Bill.store_id == sid).first()
             assert bill_rec is not None
             created_bill_id = bill_rec.id
@@ -282,8 +286,8 @@ def test_agent_orchestration_multi_step_draft_billing_dynamic_bill_id(db_session
                 arguments={
                     "bill_id": created_bill_id,
                     "items": [
-                        {"product_id": p_sugar.id, "quantity": 2},
-                        {"product_id": p_maggi.id, "quantity": 4},
+                        {"product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"},
+                        {"product_id": p_maggi.id, "quantity": 4, "query_phrase": "Maggi"},
                     ],
                 },
             )
@@ -300,7 +304,8 @@ def test_agent_orchestration_multi_step_draft_billing_dynamic_bill_id(db_session
     response = agent.run("Create a draft bill: 2kg sugar, 4 Maggi. Do not finalize.", context=ctx)
 
     assert response.metadata["action_type"] == "final_response"
-    assert response.metadata["iterations"] == 3
+    assert response.metadata["iterations"] == 5
+
 
     # Final verification
     bills = db_session.query(Bill).filter(Bill.store_id == sid).all()
@@ -370,8 +375,8 @@ def test_agent_grounded_product_resolution_and_draft_creation(db_session):
                 arguments={
                     "bill_id": created_bill_id,
                     "items": [
-                        {"product_id": p_sugar.id, "quantity": 2},
-                        {"product_id": p_maggi.id, "quantity": 4},
+                        {"product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"},
+                        {"product_id": p_maggi.id, "quantity": 4, "query_phrase": "Maggi"},
                     ],
                 },
             )
@@ -507,3 +512,223 @@ def test_agent_action_structured_output_envelope_valid_types():
     })
     assert cl.action_type == "clarification"
     assert cl.content == "Which Maggi variant?"
+
+
+def test_grounding_regression_scenarios(db_session):
+    """User-query product grounding regression test suite covering all 16 security invariants."""
+    from decimal import Decimal
+    from app.auth import ToolExecutionContext, bootstrap_store_and_user
+    from app.services import inventory_service
+    from app.db.models import Bill
+    from app.tools.registry import registry
+
+    principal = bootstrap_store_and_user(store_name="User Query Grounding Store", telegram_user_id=99001, db=db_session)
+    sid = principal.store_id
+
+    # Seed products: Sugar (ID p_sugar.id), Tea (ID p_tea.id), Maggi (ID p_maggi.id)
+    p_sugar = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Madhur Pure & Hygienic Sugar 1kg", sku="SUG-6",
+        unit="kg", cost_price=Decimal("38.00"), mrp=Decimal("45.00"), selling_price=Decimal("42.00"), stock_quantity=Decimal("100.00")
+    )
+    p_tea = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Taj Mahal Tea 500g", sku="TEA-10",
+        unit="pack", cost_price=Decimal("300.00"), mrp=Decimal("380.00"), selling_price=Decimal("357.00"), stock_quantity=Decimal("50.00")
+    )
+    p_maggi = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Maggi 2-Minute Masala Noodles 70g", sku="MAG-3",
+        unit="pack", cost_price=Decimal("10.00"), mrp=Decimal("14.00"), selling_price=Decimal("14.00"), stock_quantity=Decimal("80.00")
+    )
+
+    # 1. VALID SUGAR: user_message="Create a draft bill: 2kg sugar", search("sugar") -> ID p_sugar.id, add_bill_item(p_sugar.id, query_phrase="sugar") -> success
+    ctx_run1 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    search_res = registry.execute("search_products", {"query": "sugar"}, context=ctx_run1)
+    assert search_res.success
+    assert p_sugar.id in ctx_run1.grounded_product_ids
+    assert "sugar" in ctx_run1.grounded_product_queries[p_sugar.id]
+
+    bill_res = registry.execute("create_draft_bill", {}, context=ctx_run1)
+    b_id = bill_res.data["id"]
+    add_res = registry.execute("add_bill_item", {"bill_id": b_id, "product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"}, context=ctx_run1)
+    assert add_res.success
+
+    # 2. CASE NORMALIZATION: search "Sugar", query_phrase "sugar" -> success
+    ctx_run2 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg Sugar")
+    registry.execute("search_products", {"query": "Sugar"}, context=ctx_run2)
+    b_res2 = registry.execute("create_draft_bill", {}, context=ctx_run2)
+    b_id2 = b_res2.data["id"]
+    add_res2 = registry.execute("add_bill_item", {"bill_id": b_id2, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run2)
+    assert add_res2.success
+
+    # 3. WHITESPACE NORMALIZATION: search "  sugar  ", query_phrase "sugar" -> success
+    ctx_run3 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "  sugar  "}, context=ctx_run3)
+    b_res3 = registry.execute("create_draft_bill", {}, context=ctx_run3)
+    b_id3 = b_res3.data["id"]
+    add_res3 = registry.execute("add_bill_item", {"bill_id": b_id3, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run3)
+    assert add_res3.success
+
+    # 4. CROSS-QUERY: user asks sugar, search "tea" -> ID p_tea.id, add ID p_tea.id query_phrase "tea" -> PRODUCT_NOT_GROUNDED (because "tea" not in user_message)
+    ctx_run4 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "tea"}, context=ctx_run4)
+    b_res4 = registry.execute("create_draft_bill", {}, context=ctx_run4)
+    b_id4 = b_res4.data["id"]
+    cross_res = registry.execute("add_bill_item", {"bill_id": b_id4, "product_id": p_tea.id, "quantity": 1, "query_phrase": "tea"}, context=ctx_run4)
+    assert not cross_res.success
+    assert "PRODUCT_NOT_GROUNDED" in cross_res.error.message
+
+    # 5. LYING QUERY: search "tea" -> ID p_tea.id, query_phrase "sugar" -> PRODUCT_NOT_GROUNDED (because "sugar" was not query that returned p_tea.id)
+    ctx_run5 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "tea"}, context=ctx_run5)
+    b_res5 = registry.execute("create_draft_bill", {}, context=ctx_run5)
+    b_id5 = b_res5.data["id"]
+    lying_res = registry.execute("add_bill_item", {"bill_id": b_id5, "product_id": p_tea.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run5)
+    assert not lying_res.success
+    assert "PRODUCT_NOT_GROUNDED" in lying_res.error.message
+
+    # 6. PROMPT COLLISION: search "sugar" -> ID p_sugar.id, attempt ID p_tea.id -> PRODUCT_NOT_GROUNDED
+    ctx_run6 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run6)
+    b_res6 = registry.execute("create_draft_bill", {}, context=ctx_run6)
+    b_id6 = b_res6.data["id"]
+    collision_res = registry.execute("add_bill_item", {"bill_id": b_id6, "product_id": p_tea.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run6)
+    assert not collision_res.success
+    assert "PRODUCT_NOT_GROUNDED" in collision_res.error.message
+
+    # 7. NO SEARCH: attempt product ID without grounding -> PRODUCT_NOT_GROUNDED
+    ctx_run7 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    b_res7 = registry.execute("create_draft_bill", {}, context=ctx_run7)
+    b_id7 = b_res7.data["id"]
+    no_search_res = registry.execute("add_bill_item", {"bill_id": b_id7, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run7)
+    assert not no_search_res.success
+    assert "PRODUCT_NOT_GROUNDED" in no_search_res.error.message
+
+    # 8. EXISTING BUT WRONG PRODUCT: ID p_tea.id exists as Tea, but user asks sugar -> rejected
+    ctx_run8 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run8)
+    b_res8 = registry.execute("create_draft_bill", {}, context=ctx_run8)
+    b_id8 = b_res8.data["id"]
+    wrong_prod_res = registry.execute("add_bill_item", {"bill_id": b_id8, "product_id": p_tea.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run8)
+    assert not wrong_prod_res.success
+    assert "PRODUCT_NOT_GROUNDED" in wrong_prod_res.error.message
+
+    # 9. MULTI-ITEM VALID: sugar -> p_sugar.id, Maggi -> p_maggi.id, batch [p_sugar.id/sugar, p_maggi.id/Maggi] -> success
+    ctx_run9 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar, 4 Maggi")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run9)
+    registry.execute("search_products", {"query": "Maggi"}, context=ctx_run9)
+    b_res9 = registry.execute("create_draft_bill", {}, context=ctx_run9)
+    b_id9 = b_res9.data["id"]
+    batch_valid = registry.execute("add_bill_items", {"bill_id": b_id9, "items": [
+        {"product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"},
+        {"product_id": p_maggi.id, "quantity": 4, "query_phrase": "Maggi"},
+    ]}, context=ctx_run9)
+    assert batch_valid.success
+
+    # 10. MIXED BATCH: sugar -> p_sugar.id, Maggi -> p_maggi.id, batch includes Tea ID p_tea.id -> entire batch rejected before mutation
+    ctx_run10 = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar, 4 Maggi")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run10)
+    registry.execute("search_products", {"query": "Maggi"}, context=ctx_run10)
+    b_res10 = registry.execute("create_draft_bill", {}, context=ctx_run10)
+    b_id10 = b_res10.data["id"]
+    mixed_batch = registry.execute("add_bill_items", {"bill_id": b_id10, "items": [
+        {"product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"},
+        {"product_id": p_tea.id, "quantity": 1, "query_phrase": "tea"},
+    ]}, context=ctx_run10)
+    assert not mixed_batch.success
+    assert "PRODUCT_NOT_GROUNDED" in mixed_batch.error.message
+    # Verify 0 items added to bill10
+    bill10_rec = db_session.query(Bill).filter(Bill.id == b_id10).first()
+    assert len(bill10_rec.items) == 0
+
+    # 11. RUN ISOLATION: Run A searches sugar. Run B attempts ID p_sugar.id without searching -> Run B rejected
+    ctx_runA = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_runA)
+
+    ctx_runB = ToolExecutionContext(principal=principal, db=db_session, user_message="Create a draft bill: 2kg sugar")
+    b_resB = registry.execute("create_draft_bill", {}, context=ctx_runB)
+    b_idB = b_resB.data["id"]
+    runB_res = registry.execute("add_bill_item", {"bill_id": b_idB, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_runB)
+    assert not runB_res.success
+    assert "PRODUCT_NOT_GROUNDED" in runB_res.error.message
+
+    # 12. QUERY NOT PRESENT IN USER MESSAGE: user_message="2kg sugar", search "tea" -> ID p_tea.id, query_phrase="tea" -> rejected
+    ctx_run12 = ToolExecutionContext(principal=principal, db=db_session, user_message="2kg sugar")
+    registry.execute("search_products", {"query": "tea"}, context=ctx_run12)
+    b_res12 = registry.execute("create_draft_bill", {}, context=ctx_run12)
+    b_id12 = b_res12.data["id"]
+    not_present_res = registry.execute("add_bill_item", {"bill_id": b_id12, "product_id": p_tea.id, "quantity": 1, "query_phrase": "tea"}, context=ctx_run12)
+    assert not not_present_res.success
+    assert "PRODUCT_NOT_GROUNDED" in not_present_res.error.message
+
+    # 13. QUERY PRESENT: user_message="2kg sugar", search "sugar" -> ID p_sugar.id, query_phrase="sugar" -> allowed
+    ctx_run13 = ToolExecutionContext(principal=principal, db=db_session, user_message="2kg sugar")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run13)
+    b_res13 = registry.execute("create_draft_bill", {}, context=ctx_run13)
+    b_id13 = b_res13.data["id"]
+    present_res = registry.execute("add_bill_item", {"bill_id": b_id13, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugar"}, context=ctx_run13)
+    assert present_res.success
+
+    # 14. SUBSTRING FALSE POSITIVE: search "sugar" -> ID p_sugar.id, query_phrase="sugarcane" -> rejected (because sugarcane != sugar in grounded_product_queries)
+    ctx_run14 = ToolExecutionContext(principal=principal, db=db_session, user_message="2kg sugarcane")
+    registry.execute("search_products", {"query": "sugar"}, context=ctx_run14)
+    b_res14 = registry.execute("create_draft_bill", {}, context=ctx_run14)
+    b_id14 = b_res14.data["id"]
+    false_pos_res = registry.execute("add_bill_item", {"bill_id": b_id14, "product_id": p_sugar.id, "quantity": 1, "query_phrase": "sugarcane"}, context=ctx_run14)
+    assert not false_pos_res.success
+    assert "PRODUCT_NOT_GROUNDED" in false_pos_res.error.message
+
+
+def test_prompt_example_collision_uses_search_result_not_example_id(db_session):
+    """Verify agent uses runtime product ID from search observation, NOT example ID from prompt."""
+    from decimal import Decimal
+    from app.auth import ToolExecutionContext, bootstrap_store_and_user
+    from app.services import inventory_service
+    from app.db.models import Bill
+
+    principal = bootstrap_store_and_user(store_name="Collision Test Store", telegram_user_id=99002, db=db_session)
+    ctx = ToolExecutionContext(principal=principal, db=db_session)
+    sid = principal.store_id
+
+    p_sugar = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Sugar 1kg", sku="SUG-COL-1KG",
+        unit="kg", cost_price=Decimal("38.00"), mrp=Decimal("45.00"), selling_price=Decimal("42.00"), stock_quantity=Decimal("100.00")
+    )
+
+    created_bill_id = None
+
+    def mock_agent_llm(system_prompt, messages):
+        nonlocal created_bill_id
+        msg_count = len(messages)
+        if msg_count == 1:
+            return AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "sugar"})
+        elif msg_count == 3:
+            return AgentAction(action_type="tool_call", tool_name="create_draft_bill", arguments={})
+        elif msg_count == 5:
+            bill_rec = db_session.query(Bill).filter(Bill.store_id == sid).first()
+            assert bill_rec is not None
+            created_bill_id = bill_rec.id
+            return AgentAction(
+                action_type="tool_call",
+                tool_name="add_bill_items",
+                arguments={
+                    "bill_id": created_bill_id,
+                    "items": [{"product_id": p_sugar.id, "quantity": 2, "query_phrase": "sugar"}],
+                },
+            )
+        else:
+            return AgentAction(
+                action_type="final_response",
+                content=f"Created draft bill #{created_bill_id} with 2kg Sugar.",
+            )
+
+    mock_llm = MagicMock()
+    mock_llm.generate_action.side_effect = mock_agent_llm
+
+    agent = Agent(llm_client=mock_llm, max_iterations=8)
+    response = agent.run("Create a draft bill: 2kg sugar. Do not finalize.", context=ctx)
+
+    assert response.metadata["action_type"] == "final_response"
+
+    # Verify item in bill has runtime ID p_sugar.id
+    bill = db_session.query(Bill).filter(Bill.id == created_bill_id).first()
+    assert len(bill.items) == 1
+    assert bill.items[0].product_id == p_sugar.id

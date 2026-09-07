@@ -20,6 +20,19 @@ class ApplicationError(KiranaException):
         super().__init__(message, code=self.error_code)
 
 
+class ProductNotGroundedError(ApplicationError):
+    """Raised when a product ID was not grounded via search_products in the current run."""
+    error_code = "PRODUCT_NOT_GROUNDED"
+
+    def __init__(self, product_id: int):
+        super().__init__(
+            f"Product ID '{product_id}' was not grounded via a successful product search during this execution run. "
+            f"Please call search_products first to find valid product IDs."
+        )
+        self.product_id = product_id
+
+
+
 class InventoryError(KiranaException):
     """Base exception for inventory engine operations."""
     def __init__(self, message: str, code: str = "INVENTORY_ERROR"):

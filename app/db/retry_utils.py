@@ -15,12 +15,21 @@ from app.exceptions import DatabaseLockedError
 _T = TypeVar("_T")
 
 
+TRANSIENT_LOCK_MESSAGES = (
+    "database is locked",
+    "lock timeout",
+    "deadlock detected",
+    "could not serialize access",
+    "concurrent update",
+)
+
+
 def retry_on_lock(max_retries: int = 3, backoff_factor: float = 0.5) -> Callable[[Callable[..., _T]], Callable[..., _T]]:
-    """Decorator to retry a callable when SQLite lock errors occur.
+    """Decorator to retry a callable when SQLite or PostgreSQL transient lock/deadlock errors occur.
 
     Args:
         max_retries: Maximum number of retry attempts (default 3).
-        backoff_factor: Base back‑off in seconds; each retry waits
+        backoff_factor: Base back-off in seconds; each retry waits
             ``backoff_factor * (2 ** attempt)`` seconds.
     """
 
@@ -32,7 +41,8 @@ def retry_on_lock(max_retries: int = 3, backoff_factor: float = 0.5) -> Callable
                 try:
                     return cast(_T, func(*args, **kwargs))
                 except Exception as exc:
-                    if "database is locked" in str(exc).lower():
+                    exc_str = str(exc).lower()
+                    if any(msg in exc_str for msg in TRANSIENT_LOCK_MESSAGES):
                         if attempt >= max_retries:
                             raise DatabaseLockedError(str(exc)) from exc
                         time.sleep(backoff_factor * (2 ** attempt))

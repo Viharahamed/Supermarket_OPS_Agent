@@ -4,6 +4,7 @@ from app.services.inventory_service import (
     get_low_stock,
     receive_stock,
     adjust_stock,
+    create_product,
 )
 from app.services.gst_service import (
     quantize_money,
@@ -36,6 +37,7 @@ __all__ = [
     "get_low_stock",
     "receive_stock",
     "adjust_stock",
+    "create_product",
     "quantize_money",
     "validate_pricing",
     "calculate_line_item_gst",

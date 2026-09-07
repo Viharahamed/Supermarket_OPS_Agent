@@ -1,27 +1,40 @@
+from __future__ import annotations
 import os
 from contextlib import contextmanager
 from typing import Generator
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy 2.x declarative ORM models."""
     pass
 
-def _configure_engine(db_url: str):
-    connect_args = {}
-    if db_url.startswith("sqlite"):
-        connect_args["check_same_thread"] = False
-    
-    engine = create_engine(
-        db_url,
-        connect_args=connect_args,
-        echo=False
-    )
+def _configure_engine(db_url_or_settings: str | Settings | None = None) -> Engine:
+    if isinstance(db_url_or_settings, Settings):
+        cfg = db_url_or_settings
+        url = cfg.database_url
+    elif isinstance(db_url_or_settings, str):
+        cfg = get_settings()
+        url = db_url_or_settings
+    else:
+        cfg = get_settings()
+        url = cfg.database_url
 
-    if db_url.startswith("sqlite"):
+    # Normalize Railway postgres:// or standard postgresql:// to use psycopg v3 dialect
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg://", 1)
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+psycopg://"):
+        url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+    if url.startswith("sqlite"):
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False},
+            echo=False,
+        )
+
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
@@ -29,7 +42,18 @@ def _configure_engine(db_url: str):
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.close()
 
-    return engine
+        return engine
+
+    # PostgreSQL or other relational database dialects
+    return create_engine(
+        url,
+        pool_size=cfg.db_pool_size,
+        max_overflow=cfg.db_max_overflow,
+        pool_timeout=cfg.db_pool_timeout,
+        pool_recycle=cfg.db_pool_recycle,
+        pool_pre_ping=cfg.db_pool_pre_ping,
+        echo=False,
+    )
 
 settings = get_settings()
 

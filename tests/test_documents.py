@@ -48,7 +48,7 @@ def setup_finalized_bill(db_session):
     )
 
     with get_db_context() as db:
-        cust = Customer(name="Ramesh Sharma", phone="9876543210", email="ramesh@example.com")
+        cust = Customer(name="Ramesh Sharma", phone="9876543210")
         db.add(cust)
         db.commit()
         db.refresh(cust)
@@ -79,7 +79,7 @@ def test_generate_invoice_pdf_success(setup_finalized_bill):
 
 def test_generate_invoice_pdf_draft_fails(db_session):
     """Test that generating PDF for a draft bill raises BillNotFinalizedError."""
-    p = create_product(name="Sugar 1kg", sku="SUGAR-1KG", selling_price=Decimal("45.00"))
+    p = create_product(name="Sugar 1kg", sku="SUGAR-1KG", selling_price=Decimal("45.00"), mrp=Decimal("50.00"))
     draft_bill = create_draft_bill()
     draft_bill = add_bill_item(draft_bill.id, p.id, Decimal("1"))
 

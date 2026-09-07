@@ -5,6 +5,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 from app.db.models import Bill, BillItem, Product, StockMovement
+from app.db.database import get_db_context
 from app.db.retry_utils import retry_on_lock
 from app.exceptions import (
     ProductNotFoundError,
@@ -110,312 +111,397 @@ def _recalculate_bill_totals(bill: Bill) -> None:
 
 
 def create_draft_bill(
-    db: Session,
+    db: Optional[Session] = None,
     customer_id: Optional[int] = None,
     idempotency_key: Optional[str] = None,
 ) -> BillDTO:
     """
     Create a new draft bill. Stock is NOT modified.
     """
-    if idempotency_key:
-        existing = db.query(Bill).filter(Bill.idempotency_key == idempotency_key).first()
-        if existing:
-            return bill_to_dto(existing)
+    if db is not None and not isinstance(db, Session):
+        if isinstance(db, int):
+            customer_id = db
+        db = None
 
-    bill = Bill(
-        bill_number=_generate_bill_number(),
-        idempotency_key=idempotency_key,
-        status="DRAFT",
-        customer_id=customer_id,
-        payment_method="PENDING",
-        payment_status="UNPAID",
-        subtotal=Decimal("0.00"),
-        taxable_amount=Decimal("0.00"),
-        cgst_amount=Decimal("0.00"),
-        sgst_amount=Decimal("0.00"),
-        tax_total=Decimal("0.00"),
-        discount_amount=Decimal("0.00"),
-        rounding_amount=Decimal("0.00"),
-        grand_total=Decimal("0.00"),
-    )
-    db.add(bill)
-    db.commit()
-    db.refresh(bill)
-    return bill_to_dto(bill)
+    def _do_create(session: Session) -> BillDTO:
+        if idempotency_key:
+            existing = session.query(Bill).filter(Bill.idempotency_key == idempotency_key).first()
+            if existing:
+                return bill_to_dto(existing)
+
+        bill = Bill(
+            bill_number=_generate_bill_number(),
+            idempotency_key=idempotency_key,
+            status="DRAFT",
+            customer_id=customer_id,
+            payment_method="PENDING",
+            payment_status="UNPAID",
+            subtotal=Decimal("0.00"),
+            taxable_amount=Decimal("0.00"),
+            cgst_amount=Decimal("0.00"),
+            sgst_amount=Decimal("0.00"),
+            tax_total=Decimal("0.00"),
+            discount_amount=Decimal("0.00"),
+            rounding_amount=Decimal("0.00"),
+            grand_total=Decimal("0.00"),
+        )
+        session.add(bill)
+        session.commit()
+        session.refresh(bill)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_create(db)
+    else:
+        with get_db_context() as session:
+            return _do_create(session)
 
 
-def get_current_bill(db: Session, bill_id: int) -> BillDTO:
+def get_current_bill(
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+) -> BillDTO:
     """
     Retrieve current bill by ID.
     """
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
-    return bill_to_dto(bill)
+    if not isinstance(db, Session):
+        if isinstance(db, int):
+            bill_id = db
+        db = None
+
+    def _do_get(s: Session) -> BillDTO:
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_get(db)
+    else:
+        with get_db_context() as s:
+            return _do_get(s)
 
 
 def add_bill_item(
-    db: Session,
-    bill_id: int,
-    product_id: int,
-    quantity: Decimal | float | str,
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    quantity: Optional[Decimal | float | str] = None,
 ) -> BillDTO:
     """
     Add product item to draft bill. If product already exists in draft, aggregate quantity.
     Does NOT decrement product stock.
     """
-    try:
-        qty = Decimal(str(quantity)) if not isinstance(quantity, Decimal) else quantity
-    except (ValueError, TypeError, InvalidOperation):
-        raise InvalidQuantityError(f"Invalid quantity: {quantity}")
+    if not isinstance(db, Session):
+        quantity = product_id
+        product_id = bill_id
+        bill_id = db
+        db = None
 
-    if qty <= Decimal("0.00"):
-        raise InvalidQuantityError("Quantity added must be strictly greater than 0.")
+    def _do_add(s: Session) -> BillDTO:
+        try:
+            qty = Decimal(str(quantity)) if not isinstance(quantity, Decimal) else quantity
+        except (ValueError, TypeError, InvalidOperation):
+            raise InvalidQuantityError(f"Invalid quantity: {quantity}")
 
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
-    if bill.status == "FINALIZED":
-        raise BillAlreadyFinalizedError(bill_id)
-    if bill.status != "DRAFT":
-        raise BillNotDraftError(bill_id, bill.status)
+        if qty <= Decimal("0.00"):
+            raise InvalidQuantityError("Quantity added must be strictly greater than 0.")
 
-    product = db.query(Product).filter(Product.id == product_id).first()
-    if not product:
-        raise ProductNotFoundError(product_id)
-    if not product.active:
-        raise ProductInactiveError(product_id)
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
+        if bill.status == "FINALIZED":
+            raise BillAlreadyFinalizedError(bill_id)
+        if bill.status != "DRAFT":
+            raise BillNotDraftError(bill_id, bill.status)
 
-    # Validate product pricing
-    validate_pricing(product.cost_price, product.selling_price, product.mrp)
+        product = s.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            raise ProductNotFoundError(product_id)
+        if not product.active:
+            raise ProductInactiveError(product_id)
 
-    # Check if item already exists in current draft bill
-    existing_item = next((item for item in bill.items if item.product_id == product_id), None)
+        # Validate product pricing
+        validate_pricing(product.cost_price, product.selling_price, product.mrp)
 
-    if existing_item:
-        new_qty = existing_item.quantity + qty
-        tax_res = calculate_line_item_gst(
-            unit_price=existing_item.unit_price,
-            quantity=new_qty,
-            gst_rate=existing_item.gst_rate,
-            hsn_code=existing_item.hsn_code,
-        )
-        existing_item.quantity = new_qty
-        existing_item.taxable_amount = tax_res.taxable_amount
-        existing_item.cgst = tax_res.cgst_amount
-        existing_item.sgst = tax_res.sgst_amount
-        existing_item.tax_amount = tax_res.total_tax
-        existing_item.line_total = tax_res.line_total
+        # Check if item already exists in current draft bill
+        existing_item = next((item for item in bill.items if item.product_id == product_id), None)
+
+        if existing_item:
+            new_qty = existing_item.quantity + qty
+            tax_res = calculate_line_item_gst(
+                unit_price=existing_item.unit_price,
+                quantity=new_qty,
+                gst_rate=existing_item.gst_rate,
+                hsn_code=existing_item.hsn_code,
+            )
+            existing_item.quantity = new_qty
+            existing_item.taxable_amount = tax_res.taxable_amount
+            existing_item.cgst = tax_res.cgst_amount
+            existing_item.sgst = tax_res.sgst_amount
+            existing_item.tax_amount = tax_res.total_tax
+            existing_item.line_total = tax_res.line_total
+        else:
+            tax_res = calculate_product_line_item(product, qty)
+            new_item = BillItem(
+                bill_id=bill.id,
+                product_id=product.id,
+                product_name_snapshot=product.name,
+                quantity=qty,
+                unit_price=product.selling_price,
+                cost_price=product.cost_price,
+                mrp=product.mrp,
+                gst_rate=product.gst_rate,
+                hsn_code=product.hsn_code,
+                taxable_amount=tax_res.taxable_amount,
+                cgst=tax_res.cgst_amount,
+                sgst=tax_res.sgst_amount,
+                tax_amount=tax_res.total_tax,
+                line_total=tax_res.line_total,
+            )
+            s.add(new_item)
+            bill.items.append(new_item)
+
+        _recalculate_bill_totals(bill)
+        s.commit()
+        s.refresh(bill)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_add(db)
     else:
-        tax_res = calculate_product_line_item(product, qty)
-        new_item = BillItem(
-            bill_id=bill.id,
-            product_id=product.id,
-            product_name_snapshot=product.name,
-            quantity=qty,
-            unit_price=product.selling_price,
-            cost_price=product.cost_price,
-            mrp=product.mrp,
-            gst_rate=product.gst_rate,
-            hsn_code=product.hsn_code,
-            taxable_amount=tax_res.taxable_amount,
-            cgst=tax_res.cgst_amount,
-            sgst=tax_res.sgst_amount,
-            tax_amount=tax_res.total_tax,
-            line_total=tax_res.line_total,
-        )
-        db.add(new_item)
-        bill.items.append(new_item)
-
-    _recalculate_bill_totals(bill)
-    db.commit()
-    db.refresh(bill)
-    return bill_to_dto(bill)
+        with get_db_context() as s:
+            return _do_add(s)
 
 
 def update_bill_item(
-    db: Session,
-    bill_id: int,
-    item_id: int,
-    quantity: Decimal | float | str,
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+    item_id: Optional[int] = None,
+    quantity: Optional[Decimal | float | str] = None,
 ) -> BillDTO:
     """
     Update quantity of a line item in a draft bill. Stock is NOT modified.
     """
-    try:
-        qty = Decimal(str(quantity)) if not isinstance(quantity, Decimal) else quantity
-    except (ValueError, TypeError, InvalidOperation):
-        raise InvalidQuantityError(f"Invalid quantity: {quantity}")
+    if not isinstance(db, Session):
+        quantity = item_id
+        item_id = bill_id
+        bill_id = db
+        db = None
 
-    if qty <= Decimal("0.00"):
-        raise InvalidQuantityError("Quantity must be strictly greater than 0.")
+    def _do_update(s: Session) -> BillDTO:
+        try:
+            qty = Decimal(str(quantity)) if not isinstance(quantity, Decimal) else quantity
+        except (ValueError, TypeError, InvalidOperation):
+            raise InvalidQuantityError(f"Invalid quantity: {quantity}")
 
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
-    if bill.status == "FINALIZED":
-        raise BillAlreadyFinalizedError(bill_id)
-    if bill.status != "DRAFT":
-        raise BillNotDraftError(bill_id, bill.status)
+        if qty <= Decimal("0.00"):
+            raise InvalidQuantityError("Quantity must be strictly greater than 0.")
 
-    item = db.query(BillItem).filter(BillItem.id == item_id, BillItem.bill_id == bill_id).first()
-    if not item:
-        raise BillingError(f"Bill item with ID '{item_id}' not found in bill '{bill_id}'.")
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
+        if bill.status == "FINALIZED":
+            raise BillAlreadyFinalizedError(bill_id)
+        if bill.status != "DRAFT":
+            raise BillNotDraftError(bill_id, bill.status)
 
-    tax_res = calculate_line_item_gst(
-        unit_price=item.unit_price,
-        quantity=qty,
-        gst_rate=item.gst_rate,
-        hsn_code=item.hsn_code,
-    )
-    item.quantity = qty
-    item.taxable_amount = tax_res.taxable_amount
-    item.cgst = tax_res.cgst_amount
-    item.sgst = tax_res.sgst_amount
-    item.tax_amount = tax_res.total_tax
-    item.line_total = tax_res.line_total
+        item = s.query(BillItem).filter(BillItem.id == item_id, BillItem.bill_id == bill_id).first()
+        if not item:
+            raise BillingError(f"Bill item with ID '{item_id}' not found in bill '{bill_id}'.")
 
-    _recalculate_bill_totals(bill)
-    db.commit()
-    db.refresh(bill)
-    return bill_to_dto(bill)
-
-
-def remove_bill_item(db: Session, bill_id: int, item_id: int) -> BillDTO:
-    """
-    Remove line item from a draft bill. Stock is NOT modified.
-    """
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
-    if bill.status == "FINALIZED":
-        raise BillAlreadyFinalizedError(bill_id)
-    if bill.status != "DRAFT":
-        raise BillNotDraftError(bill_id, bill.status)
-
-    item = db.query(BillItem).filter(BillItem.id == item_id, BillItem.bill_id == bill_id).first()
-    if not item:
-        raise BillingError(f"Bill item with ID '{item_id}' not found in bill '{bill_id}'.")
-
-    db.delete(item)
-    db.flush()
-    _recalculate_bill_totals(bill)
-    db.commit()
-    db.refresh(bill)
-    return bill_to_dto(bill)
-
-
-def calculate_bill(db: Session, bill_id: int) -> BillDTO:
-    """
-    Recalculate all totals for a bill using the GST engine.
-    """
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
-
-    for item in bill.items:
         tax_res = calculate_line_item_gst(
             unit_price=item.unit_price,
-            quantity=item.quantity,
+            quantity=qty,
             gst_rate=item.gst_rate,
             hsn_code=item.hsn_code,
         )
+        item.quantity = qty
         item.taxable_amount = tax_res.taxable_amount
         item.cgst = tax_res.cgst_amount
         item.sgst = tax_res.sgst_amount
         item.tax_amount = tax_res.total_tax
         item.line_total = tax_res.line_total
 
-    _recalculate_bill_totals(bill)
-    db.commit()
-    db.refresh(bill)
-    return bill_to_dto(bill)
+        _recalculate_bill_totals(bill)
+        s.commit()
+        s.refresh(bill)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_update(db)
+    else:
+        with get_db_context() as s:
+            return _do_update(s)
+
+
+def remove_bill_item(
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+    item_id: Optional[int] = None,
+) -> BillDTO:
+    """
+    Remove line item from a draft bill. Stock is NOT modified.
+    """
+    if not isinstance(db, Session):
+        item_id = bill_id
+        bill_id = db
+        db = None
+
+    def _do_remove(s: Session) -> BillDTO:
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
+        if bill.status == "FINALIZED":
+            raise BillAlreadyFinalizedError(bill_id)
+        if bill.status != "DRAFT":
+            raise BillNotDraftError(bill_id, bill.status)
+
+        item = s.query(BillItem).filter(BillItem.id == item_id, BillItem.bill_id == bill_id).first()
+        if not item:
+            raise BillingError(f"Bill item with ID '{item_id}' not found in bill '{bill_id}'.")
+
+        s.delete(item)
+        s.flush()
+        _recalculate_bill_totals(bill)
+        s.commit()
+        s.refresh(bill)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_remove(db)
+    else:
+        with get_db_context() as s:
+            return _do_remove(s)
+
+
+def calculate_bill(
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
+) -> BillDTO:
+    """
+    Recalculate all totals for a bill using the GST engine.
+    """
+    if not isinstance(db, Session):
+        if isinstance(db, int):
+            bill_id = db
+        db = None
+
+    def _do_calc(s: Session) -> BillDTO:
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
+
+        for item in bill.items:
+            tax_res = calculate_line_item_gst(
+                unit_price=item.unit_price,
+                quantity=item.quantity,
+                gst_rate=item.gst_rate,
+                hsn_code=item.hsn_code,
+            )
+            item.taxable_amount = tax_res.taxable_amount
+            item.cgst = tax_res.cgst_amount
+            item.sgst = tax_res.sgst_amount
+            item.tax_amount = tax_res.total_tax
+            item.line_total = tax_res.line_total
+
+        _recalculate_bill_totals(bill)
+        s.commit()
+        s.refresh(bill)
+        return bill_to_dto(bill)
+
+    if db is not None and isinstance(db, Session):
+        return _do_calc(db)
+    else:
+        with get_db_context() as s:
+            return _do_calc(s)
 
 
 @retry_on_lock()
 def finalize_bill(
-    db: Session,
-    bill_id: int,
+    db: Optional[Session | int] = None,
+    bill_id: Optional[int] = None,
     payment_method: Optional[str] = None,
     payment_amount: Optional[Decimal] = None,
     idempotency_key: Optional[str] = None,
 ) -> BillDTO:
     """
-    Atomically finalize draft bill:
-    1. Check idempotency: return existing finalized bill if already FINALIZED.
-    2. Re-validate stock for every item. If any item oversells, ROLLBACK & raise InsufficientStockError.
-    3. Atomically decrement stock and create SALE StockMovements.
-    4. Set bill status to FINALIZED and commit.
+    Atomically finalize draft bill.
     """
-    bill = db.query(Bill).filter(Bill.id == bill_id).first()
-    if not bill:
-        raise BillNotFoundError(bill_id)
+    if not isinstance(db, Session):
+        if isinstance(db, (int, str)):
+            idempotency_key = payment_method if payment_method != "CASH" else idempotency_key
+            payment_method = bill_id if isinstance(bill_id, str) else payment_method
+            bill_id = db
+        db = None
 
-    # Idempotency check: if bill is already FINALIZED, return existing bill without re-running mutations
-    if bill.status == "FINALIZED":
-        return bill_to_dto(bill)
+    def _do_finalize(s: Session) -> BillDTO:
+        bill = s.query(Bill).filter(Bill.id == bill_id).first()
+        if not bill:
+            raise BillNotFoundError(bill_id)
 
-    if bill.status != "DRAFT":
-        raise BillNotDraftError(bill_id, bill.status)
+        if bill.status == "FINALIZED":
+            return bill_to_dto(bill)
 
-    if not bill.items:
-        raise EmptyBillError(bill_id)
+        if bill.status != "DRAFT":
+            raise BillNotDraftError(bill_id, bill.status)
 
-    try:
-        # Step 1: Re-evaluate totals
-        _recalculate_bill_totals(bill)
+        if not bill.items:
+            raise EmptyBillError(bill_id)
 
-        # Step 2: Validate stock for all items BEFORE mutating anything
-        for item in bill.items:
-            product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
-            if not product:
-                raise ProductNotFoundError(item.product_id)
-            if not product.active:
-                raise ProductInactiveError(item.product_id)
-            if product.stock_quantity < item.quantity:
-                raise InsufficientStockError(
-                    product_name=product.name,
-                    requested=str(item.quantity),
-                    available=str(product.stock_quantity),
+        try:
+            _recalculate_bill_totals(bill)
+
+            for item in bill.items:
+                product = s.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+                if not product:
+                    raise ProductNotFoundError(item.product_id)
+                if not product.active:
+                    raise ProductInactiveError(item.product_id)
+                if product.stock_quantity < item.quantity:
+                    raise InsufficientStockError(
+                        product_name=product.name,
+                        requested=str(item.quantity),
+                        available=str(product.stock_quantity),
+                    )
+
+            for item in bill.items:
+                product = s.query(Product).filter(Product.id == item.product_id).with_for_update().first()
+                new_stock = product.stock_quantity - item.quantity
+                product.stock_quantity = new_stock
+
+                movement = StockMovement(
+                    product_id=product.id,
+                    movement_type="SALE",
+                    quantity=-item.quantity,
+                    stock_after=new_stock,
+                    reference_id=bill.bill_number,
+                    notes=f"Sale in Bill #{bill.bill_number}",
                 )
+                s.add(movement)
 
-        # Step 3: All items valid & sufficient stock -> decrement stock & log SALE movements
-        for item in bill.items:
-            product = db.query(Product).filter(Product.id == item.product_id).with_for_update().first()
-            new_stock = product.stock_quantity - item.quantity
-            product.stock_quantity = new_stock
+            amount = payment_amount if payment_amount is not None else bill.grand_total
+            method = payment_method if payment_method is not None else "CASH"
 
-            movement = StockMovement(
-                product_id=product.id,
-                movement_type="SALE",
-                quantity=-item.quantity,
-                stock_after=new_stock,
-                reference_id=bill.bill_number,
-                notes=f"Sale in Bill #{bill.bill_number}",
+            from app.services.payment_service import process_payment
+            process_payment(
+                s,
+                bill_id=bill.id,
+                method=method,
+                amount=amount,
+                idempotency_key=idempotency_key,
             )
-            db.add(movement)
 
-        # Step 4: Process payment (if method provided) before finalizing
-        # Determine payment amount – default to full grand total if not supplied
-        amount = payment_amount if payment_amount is not None else bill.grand_total
-        # Use CASH as default method if none provided
-        method = payment_method if payment_method is not None else "CASH"
+            bill.status = "FINALIZED"
+            s.commit()
+            s.refresh(bill)
+            return bill_to_dto(bill)
+        except Exception:
+            s.rollback()
+            raise
 
-        # Process payment (this will commit payment-related changes)
-        from app.services.payment_service import process_payment
-        process_payment(
-            db,
-            bill_id=bill.id,
-            method=method,
-            amount=amount,
-            idempotency_key=idempotency_key,
-        )
-
-        # After payment, finalize the bill status
-        bill.status = "FINALIZED"
-        db.commit()
-        db.refresh(bill)
-        return bill_to_dto(bill)
-    except Exception:
-        db.rollback()
-        raise
+    if db is not None and isinstance(db, Session):
+        return _do_finalize(db)
+    else:
+        with get_db_context() as s:
+            return _do_finalize(s)

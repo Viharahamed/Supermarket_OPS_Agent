@@ -53,10 +53,12 @@ def format_telegram_html(text: str) -> str:
     if not text:
         return ""
 
+    # Convert triple backtick code blocks first
+    text = re.sub(r"```(?:[a-zA-Z0-9_-]+\n)?([\s\S]*?)```", r"<pre>\1</pre>", text)
     # Convert standard markdown syntax to HTML tags if markdown was used
     text = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\w)\*(.*?)\*(?!\w)", r"<i>\1</i>", text)
-    text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+    text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
 
     # Allowed Telegram HTML tags
     allowed_tags = ["b", "i", "code", "pre", "u", "s"]

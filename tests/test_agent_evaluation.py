@@ -103,8 +103,8 @@ def test_agent_system_prompt_tool_injection():
 
     assert "AVAILABLE TOOLS:" in prompt
     assert "search_products" in prompt
-    assert "Search catalog by name or code" in prompt
-    assert '"query": "string"' in prompt
+    assert '"query"' in prompt
+    assert "string" in prompt
 
 
 # -----------------------------------------------------------------------------

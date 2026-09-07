@@ -25,6 +25,7 @@ from reportlab.platypus import (
 )
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.database import get_db_context
 from app.db.models import Bill, Customer, OwnerPreference, Store
 from app.exceptions import (
@@ -33,7 +34,13 @@ from app.exceptions import (
     DocumentGenerationError,
 )
 
-INVOICES_DIR = Path("generated/invoices")
+
+def _get_invoices_dir() -> Path:
+    """Return platform-independent Path object for invoice document storage."""
+    settings = get_settings()
+    target_dir = Path(settings.local_document_dir) / "invoices"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir
 
 
 def generate_invoice_pdf(
@@ -80,8 +87,8 @@ def _generate_invoice_pdf_impl(db: Session, bill_identifier: int | str) -> dict:
     receipt_footer = footer_pref.value if footer_pref else "Thank you for shopping with us! Visit again."
 
     # 3. Ensure output directory exists
-    INVOICES_DIR.mkdir(parents=True, exist_ok=True)
-    file_path = INVOICES_DIR / f"invoice_{bill.id}.pdf"
+    invoices_dir = _get_invoices_dir()
+    file_path = invoices_dir / f"invoice_{bill.id}.pdf"
 
     try:
         doc = SimpleDocTemplate(

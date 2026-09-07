@@ -20,6 +20,7 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db.database import get_db_context
 from app.db.models import OwnerPreference, Store
 from app.documents.charts import (
@@ -34,8 +35,16 @@ from app.exceptions import (
 )
 from app.services import reporting_service, inventory_service
 
-REPORTS_DIR = Path("generated/reports")
-TEMP_CHARTS_DIR = Path("generated/reports/temp_charts")
+
+def _get_reports_dirs() -> tuple[Path, Path]:
+    """Return platform-independent Path objects for reports and temporary chart files."""
+    settings = get_settings()
+    base_dir = Path(settings.local_document_dir)
+    reports_dir = base_dir / "reports"
+    temp_charts_dir = reports_dir / "temp_charts"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    temp_charts_dir.mkdir(parents=True, exist_ok=True)
+    return reports_dir, temp_charts_dir
 
 
 def parse_date(date_str: str) -> date:
@@ -51,18 +60,12 @@ def generate_sales_analysis_pptx(
     end_date_str: Optional[str] = None,
     days: int = 7,
     db: Session = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> dict:
-    """Generate an 8-slide PowerPoint Sales Analysis presentation.
-
-    Args:
-        start_date_str: Start date YYYY-MM-DD (Defaults to 7 days ago if omitted)
-        end_date_str: End date YYYY-MM-DD (Defaults to today if omitted)
-        days: Number of trailing days if start_date is omitted
-        db: Optional database session
-
-    Returns:
-        dict containing file_path, file_name, start_date, end_date, total_sales, total_bills.
-    """
+    """Generate an 8-slide PowerPoint Sales Analysis presentation."""
+    start_date_str = start_date_str or start_date
+    end_date_str = end_date_str or end_date
     today = date.today()
 
     if end_date_str:
@@ -118,8 +121,8 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
         curr += timedelta(days=1)
 
     # 4. Render Matplotlib Charts
-    TEMP_CHARTS_DIR.mkdir(parents=True, exist_ok=True)
-    daily_chart_path = create_daily_sales_chart(daily_sales_data, TEMP_CHARTS_DIR / "daily_sales.png")
+    reports_dir, temp_charts_dir = _get_reports_dirs()
+    daily_chart_path = create_daily_sales_chart(daily_sales_data, temp_charts_dir / "daily_sales.png")
     
     payment_dict = {
         "CASH": float(payment_report.cash),
@@ -127,13 +130,13 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
         "CARD": float(payment_report.card),
         "KHATA": float(payment_report.khata),
     }
-    payment_chart_path = create_payment_method_chart(payment_dict, TEMP_CHARTS_DIR / "payment_methods.png")
+    payment_chart_path = create_payment_method_chart(payment_dict, temp_charts_dir / "payment_methods.png")
 
     top_prod_dict_list = [
         {"name": item.product_name, "total_revenue": float(item.sales_value)}
         for item in top_products_list
     ]
-    top_prod_chart_path = create_top_products_chart(top_prod_dict_list, TEMP_CHARTS_DIR / "top_products.png")
+    top_prod_chart_path = create_top_products_chart(top_prod_dict_list, temp_charts_dir / "top_products.png")
 
     # 5. Build PowerPoint Deck using python-pptx
     prs = Presentation()
@@ -405,9 +408,8 @@ def _generate_pptx_impl(db: Session, start_d: date, end_d: date) -> dict:
         p_ins.font.color.rgb = RGBColor(45, 55, 72)
 
     # 6. Save PPTX File
-    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     file_name = f"sales_analysis_{start_d.isoformat()}_{end_d.isoformat()}.pptx"
-    file_path = REPORTS_DIR / file_name
+    file_path = reports_dir / file_name
 
     try:
         prs.save(str(file_path))

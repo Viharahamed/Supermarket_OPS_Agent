@@ -200,7 +200,7 @@ async def test_text_message_handler_routing():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("exception_obj, expected_keyword", [
-    (OllamaUnavailableError("Service down"), "Ollama AI service"),
+    (OllamaUnavailableError("Service down"), "AI Service"),
     (OllamaTimeoutError("Request timed out"), "timed out"),
     (ModelNotFoundError("qwen3:8b"), "not found"),
     (Exception("Generic application error"), "error occurred"),

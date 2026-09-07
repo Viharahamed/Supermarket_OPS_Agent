@@ -254,3 +254,67 @@ def adjust_stock(
     except Exception:
         db.rollback()
         raise
+
+
+def create_product(
+    db: Optional[Session] = None,
+    name: str = "",
+    sku: str = "",
+    category: Optional[str] = None,
+    brand: Optional[str] = None,
+    unit: str = "piece",
+    pack_size: Decimal | float | str = Decimal("1.00"),
+    is_loose: bool = False,
+    cost_price: Decimal | float | str = Decimal("0.00"),
+    selling_price: Decimal | float | str = Decimal("0.00"),
+    mrp: Decimal | float | str = Decimal("0.00"),
+    gst_rate: Decimal | float | str = Decimal("0.00"),
+    hsn_code: Optional[str] = None,
+    stock_quantity: Decimal | float | str = Decimal("0.00"),
+    reorder_level: Decimal | float | str = Decimal("10.00"),
+    active: bool = True,
+) -> Product:
+    """
+    Helper function to create and persist a new Product entity in inventory.
+    """
+    pack_size_dec = _to_decimal(pack_size, "pack_size")
+    cost_dec = _to_decimal(cost_price, "cost_price")
+    selling_dec = _to_decimal(selling_price, "selling_price")
+    mrp_dec = _to_decimal(mrp, "mrp")
+    if mrp_dec == Decimal("0.00") and selling_dec > Decimal("0.00"):
+        mrp_dec = selling_dec
+    gst_dec = _to_decimal(gst_rate, "gst_rate")
+    stock_dec = _to_decimal(stock_quantity, "stock_quantity")
+    reorder_dec = _to_decimal(reorder_level, "reorder_level")
+
+    def _do_create(session: Session) -> Product:
+        product = Product(
+            name=name,
+            sku=sku,
+            category=category,
+            brand=brand,
+            unit=unit,
+            pack_size=pack_size_dec,
+            is_loose=is_loose,
+            cost_price=cost_dec,
+            selling_price=selling_dec,
+            mrp=mrp_dec,
+            gst_rate=gst_dec,
+            hsn_code=hsn_code,
+            stock_quantity=stock_dec,
+            reorder_level=reorder_dec,
+            active=active,
+        )
+        session.add(product)
+        session.commit()
+        session.refresh(product)
+        session.expunge(product)
+        return product
+
+    if db is not None and isinstance(db, Session):
+        return _do_create(db)
+    else:
+        from app.db.database import get_db_context
+        with get_db_context() as session:
+            return _do_create(session)
+

@@ -259,14 +259,14 @@ class LLMAuthenticationError(LLMProviderError):
 
 class LLMUnavailableError(LLMProviderError):
     """Raised when LLM provider service cannot be reached."""
-    def __init__(self, message: str = "LLM provider service is unavailable."):
-        super().__init__(message, code="LLM_UNAVAILABLE")
+    def __init__(self, message: str = "LLM provider service is unavailable.", code: str = "LLM_UNAVAILABLE"):
+        super().__init__(message, code=code)
 
 
 class LLMTimeoutError(LLMProviderError):
     """Raised when request to LLM provider times out."""
-    def __init__(self, message: str = "LLM provider request timed out."):
-        super().__init__(message, code="LLM_TIMEOUT")
+    def __init__(self, message: str = "LLM provider request timed out.", code: str = "LLM_TIMEOUT"):
+        super().__init__(message, code=code)
 
 
 class OllamaError(LLMProviderError):

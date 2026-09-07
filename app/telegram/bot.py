@@ -33,7 +33,7 @@ logger = logging.getLogger("app.telegram.bot")
 def build_application(token: str = None) -> Application:
     """Build and configure python-telegram-bot Application instance."""
     settings = get_settings()
-    bot_token = token or settings.telegram_bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
+    bot_token = token or settings.telegram_bot_token
 
     if not bot_token:
         raise ValueError(

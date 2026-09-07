@@ -59,7 +59,7 @@ def seed_orchestration_data(db_session):
     )
 
     with get_db_context() as db:
-        c1 = Customer(name="Ramesh Kumar", phone="9876543210", email="ramesh@example.com")
+        c1 = Customer(name="Ramesh Kumar", phone="9876543210")
         db.add(c1)
         db.commit()
         db.refresh(c1)

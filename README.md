@@ -161,3 +161,148 @@ pytest tests/test_telegram_bot.py -v
 - **Stock Safety & Idempotency**: Stock decrements occur in atomic database transactions during `finalize_bill` with idempotency key protection against duplicate commands.
 - **Telegram HTML & Document Delivery**: Automatic HTML escaping, formatting (`<b>`, `<i>`, `<code>`, `₹`), long message splitting (>4096 chars), and native file attachment delivery.
 
+---
+
+## ⚙️ Production Configuration (Phase 13A.2)
+
+The application uses a single, centralized, typed configuration system (`app/config.py`) powered by `pydantic-settings`.
+
+### Setup & Usage
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Configure required environment variables in `.env`.
+3. **LLM Provider Selection**:
+   - Local Ollama: Set `LLM_PROVIDER=ollama`.
+   - Cloud OpenRouter: Set `LLM_PROVIDER=openrouter` and supply `OPENROUTER_API_KEY`.
+4. **Environment Modes (`APP_ENV`)**:
+   - `development`: Allows local SQLite and Ollama defaults with `DEBUG=true`.
+   - `test`: Used during pytest executions with isolated test settings.
+   - `production`: Strictly enforces `DEBUG=false` and requires active provider secrets.
+5. **Security Rules**:
+   - `.env` is ignored by git and must never be committed.
+   - API keys and tokens are automatically masked in log outputs and object string representations.
+
+---
+
+## 🗄️ Database Configuration (Phase 13A.3)
+
+The application supports both **SQLite** for local development/testing and **PostgreSQL** for production deployments via SQLAlchemy 2.x and the `psycopg` 3.x driver.
+
+### Database Selection via `DATABASE_URL`
+- **Development (SQLite)**:
+  ```env
+  DATABASE_URL=sqlite:///./data/kirana.db
+  ```
+  Automatically enables SQLite-specific connection parameters (`check_same_thread=False`) and connection pragmas (`PRAGMA foreign_keys=ON`, `PRAGMA journal_mode=WAL`).
+
+- **Production (PostgreSQL)**:
+  ```env
+  DATABASE_URL=postgresql+psycopg://username:password@localhost:5432/kirana
+  ```
+  Uses the modern `psycopg` (v3) driver and configures production connection pooling.
+
+### Connection Pool Configuration (PostgreSQL)
+- `DB_POOL_SIZE`: Base pool connection count (default: `5`).
+- `DB_MAX_OVERFLOW`: Maximum temporary overflow connections (default: `10`).
+- `DB_POOL_TIMEOUT`: Seconds to wait before timing out on pool exhaustion (default: `30`).
+- `DB_POOL_RECYCLE`: Connection recycle interval in seconds (default: `1800`).
+- `DB_POOL_PRE_PING`: Health check connections before checkout (default: `true`).
+
+---
+
+## 🔄 Database Migrations (Phase 13A.4)
+
+Database schema evolution is managed via **Alembic**.
+
+### Migration Commands
+- **Upgrade Database Schema to Latest Revision**:
+  ```bash
+  alembic upgrade head
+  ```
+- **Check Current Migration Revision**:
+  ```bash
+  alembic current
+  ```
+- **View Migration History**:
+  ```bash
+  alembic history
+  ```
+- **Downgrade Schema (Development/Testing only)**:
+  ```bash
+  alembic downgrade base
+  ```
+
+> [!NOTE]
+> Alembic dynamically sources `DATABASE_URL` from `app.config.get_settings().database_url` (or `POSTGRES_TEST_URL` during testing). Never hardcode credentials in `alembic.ini`.
+
+---
+
+## ⚡ FastAPI Application Layer (Phase 13A.5)
+
+The Kirana AI Agent includes a production HTTP application layer built on **FastAPI** and **Uvicorn**.
+
+### Running the API Server
+
+Start the local Uvicorn development server:
+
+```powershell
+uvicorn app.api.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### Endpoints & Monitoring
+
+- **`GET /health`** (Process Liveness Probe):
+  - Returns HTTP 200 `{"status": "ok"}` without external or database dependencies.
+  - Used by container platforms to verify application process liveness.
+- **`GET /ready`** (Database Readiness Probe):
+  - Executes a lightweight `SELECT 1` query via `get_db_context()`.
+  - Returns HTTP 200 `{"status": "ready", "database": "connected"}` when database connectivity is healthy.
+  - Returns HTTP 503 `{"status": "not_ready"}` if database is unreachable (without leaking internal exception messages or connection strings).
+- **`GET /docs` & `GET /openapi.json`**:
+  - Interactive OpenAPI / Swagger UI documentation and API schema specification.
+
+### Security & Middleware
+- **CORS Support**: Configured dynamically via `CORS_ORIGINS` in `app/config.py`.
+- **Credential Masking**: Health and documentation endpoints are isolated from internal secrets and database credentials.
+
+---
+
+## 🚂 Railway Deployment (Phase 13A.6)
+
+The Kirana AI Agent is prepared for production deployment on **Railway**.
+
+### Deployment Architecture
+
+- **Web Application Service**: Runs FastAPI (`uvicorn app.api.main:app --host 0.0.0.0 --port $PORT`) using standard Nixpacks build context (`railway.toml` / `Procfile`).
+- **Railway PostgreSQL Service**: Production relational database providing `DATABASE_URL` (`postgres://...` or `postgresql://...`). The app automatically standardizes connection strings to `postgresql+psycopg://`.
+
+### Railway Deployment Workflow
+
+1. **Push Repository to GitHub**: Connect your repository to Railway.
+2. **Create Railway Project**: Add a new web service pointing to the repository.
+3. **Provision Railway PostgreSQL**: Add a PostgreSQL database service in the Railway project.
+4. **Link Environment Variables**:
+   - `APP_ENV`: `production`
+   - `DEBUG`: `false`
+   - `LLM_PROVIDER`: `openrouter`
+   - `OPENROUTER_API_KEY`: `your_actual_openrouter_key`
+   - `DATABASE_URL`: `${{ Postgres.DATABASE_URL }}`
+   - `TELEGRAM_BOT_TOKEN`: `your_telegram_bot_token`
+5. **Run Alembic Schema Migrations Explicitly**:
+   Execute migrations against Railway PostgreSQL:
+   ```bash
+   railway run alembic upgrade head
+   ```
+6. **Verify Endpoints**:
+   - Process Liveness Probe: `GET /health`
+   - Database Readiness Probe: `GET /ready`
+   - OpenAPI Documentation: `GET /docs`
+
+> [!IMPORTANT]
+> Database schema migrations are **explicit** operations and are **not** auto-executed during FastAPI startup. Telegram polling remains decoupled from the web application process.
+
+
+
+

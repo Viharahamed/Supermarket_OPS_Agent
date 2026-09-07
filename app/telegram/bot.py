@@ -63,6 +63,13 @@ def main() -> None:
     print("  🏪 KIRANA AI AGENT — TELEGRAM BOT RUNNER")
     print("=" * 60)
 
+    settings = get_settings()
+    if settings.telegram_mode.lower().strip() == "webhook":
+        print("\n⚠️ TELEGRAM_MODE is configured as 'webhook'.")
+        print("Local polling is disabled. Webhook updates are served by FastAPI (uvicorn app.api.main:app).")
+        print("To run local polling, set TELEGRAM_MODE=polling in your environment.\n")
+        return
+
     # Initialize DB tables
     init_db()
     print("Database tables initialized.")
@@ -80,6 +87,7 @@ def main() -> None:
     except Exception as exc:
         print(f"\n❌ Exception starting Telegram Bot: {exc}")
         sys.exit(1)
+
 
 
 if __name__ == "__main__":

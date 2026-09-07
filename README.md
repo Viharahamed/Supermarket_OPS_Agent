@@ -398,6 +398,67 @@ The Kirana AI Agent supports production-grade multi-tenancy and store isolation.
 - **Auto-Bootstrapping**: Fresh database installations auto-bootstrap Store #1 and User #1 upon first execution to maintain single-store developer convenience.
 - **Unauthorized Access**: Unregistered Telegram user IDs are rejected with clean warning responses.
 
+---
+
+## 🚀 Telegram Webhook & Production Deployment (Phase 15)
+
+The Kirana AI Agent supports both local polling for development and secure HTTPS webhook processing for production Railway deployments.
+
+### ⚙️ Operating Modes (`TELEGRAM_MODE`)
+- **Local Development (`TELEGRAM_MODE=polling`)**:
+  - Run bot runner: `python run_bot.py`.
+  - Uses standard long polling loop. Requires no public base URL or webhook secret.
+- **Production Webhook (`TELEGRAM_MODE=webhook`)**:
+  - Hosted inside FastAPI application (`POST /telegram/webhook`).
+  - Started via `uvicorn app.api.main:app --host 0.0.0.0 --port $PORT`.
+  - Managed by FastAPI application lifespan (`lifespan`).
+  - Requires `TELEGRAM_WEBHOOK_SECRET` and HTTPS `PUBLIC_BASE_URL`.
+
+### 🛡️ Webhook Security & Architecture
+1. **Secret Token Header Validation**: Every incoming update must include header `X-Telegram-Bot-Api-Secret-Token` matching `TELEGRAM_WEBHOOK_SECRET`. Unauthenticated requests are rejected with HTTP 403.
+2. **Credential Masking**: Bot token is never part of the URL path (`POST /telegram/webhook`). Webhook secret is masked in logs and representation outputs.
+3. **No Duplicate Execution**: Startup fast-fails if polling is launched when `TELEGRAM_MODE=webhook`.
+
+### 📋 Production Environment Variables
+
+| Variable Name | Production Value Example | Purpose |
+|---|---|---|
+| `APP_ENV` | `production` | Enables production validation rules |
+| `DEBUG` | `false` | Disables debug mode and stack traces |
+| `LLM_PROVIDER` | `openrouter` | Selects OpenRouter cloud backend |
+| `OPENROUTER_API_KEY` | `sk-or-v1-...` | OpenRouter API Key |
+| `DATABASE_URL` | `postgresql+psycopg://...` | Railway PostgreSQL database URL |
+| `TELEGRAM_BOT_TOKEN` | `123456789:ABC...` | Telegram Bot API token |
+| `TELEGRAM_MODE` | `webhook` | Enables production webhook mode |
+| `TELEGRAM_WEBHOOK_SECRET` | `secret_token_abc123` | Telegram secret header validation token |
+| `PUBLIC_BASE_URL` | `https://kirana-bot.up.railway.app` | Public HTTPS URL of deployed service |
+| `DOCUMENT_STORAGE` | `local` | Filesystem storage backend |
+| `LOCAL_DOCUMENT_DIR` | `/app/data/generated` | Persistent Railway Volume mount path |
+| `TIMEZONE` | `Asia/Kolkata` | Application timezone |
+
+### 🛠️ Production Deployment Runbook
+
+1. **Deploy Code & Provision Railway Services**:
+   - Push repository to private GitHub and link to Railway project.
+   - Provision Railway PostgreSQL database service and set `DATABASE_URL`.
+   - Add Railway Volume mounted to `/app/data/generated` and set `LOCAL_DOCUMENT_DIR=/app/data/generated`.
+2. **Configure Production Environment Variables**:
+   - Set `APP_ENV=production`, `DEBUG=false`, `TELEGRAM_MODE=webhook`, `TELEGRAM_WEBHOOK_SECRET`, `PUBLIC_BASE_URL`.
+3. **Execute Alembic Database Migrations**:
+   ```bash
+   railway run alembic upgrade head
+   ```
+4. **Register Telegram Webhook**:
+   Run the controlled registration setup script:
+   ```bash
+   python scripts/register_webhook.py
+   ```
+5. **Verify Endpoints & Health**:
+   - Liveness Probe: `GET /health` (HTTP 200)
+   - Readiness Probe: `GET /ready` (HTTP 200)
+   - Send test message on Telegram and verify update processing, DB updates, and PDF/PPTX attachment delivery.
+
+
 
 
 

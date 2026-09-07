@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     # Telegram settings
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_mode: str = Field(default="polling", alias="TELEGRAM_MODE")
+    telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
+    public_base_url: str = Field(default="", alias="PUBLIC_BASE_URL")
 
     # Server settings (for future API use)
     host: str = Field(default="0.0.0.0", alias="HOST")
@@ -74,6 +76,20 @@ class Settings(BaseSettings):
         if env not in allowed_envs:
             raise ValueError(f"Invalid APP_ENV '{self.app_env}'. Allowed: {allowed_envs}")
 
+        # Telegram mode checks
+        mode = self.telegram_mode.lower().strip()
+        allowed_modes = ["polling", "webhook"]
+        if mode not in allowed_modes:
+            raise ValueError(f"Invalid TELEGRAM_MODE '{self.telegram_mode}'. Allowed: {allowed_modes}")
+
+        if mode == "webhook":
+            if not self.telegram_webhook_secret.strip():
+                raise ValueError("TELEGRAM_WEBHOOK_SECRET is required when TELEGRAM_MODE=webhook.")
+            if not self.public_base_url.strip():
+                raise ValueError("PUBLIC_BASE_URL is required when TELEGRAM_MODE=webhook.")
+            if not self.public_base_url.lower().startswith("https://"):
+                raise ValueError("PUBLIC_BASE_URL must start with 'https://' when TELEGRAM_MODE=webhook.")
+
         # Production strictness checks
         if env == "production":
             if self.debug:
@@ -89,7 +105,10 @@ class Settings(BaseSettings):
             data["openrouter_api_key"] = "***MASKED***"
         if data.get("telegram_bot_token"):
             data["telegram_bot_token"] = "***MASKED***"
+        if data.get("telegram_webhook_secret"):
+            data["telegram_webhook_secret"] = "***MASKED***"
         return f"Settings({data})"
+
 
 
 @lru_cache()

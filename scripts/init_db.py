@@ -13,7 +13,22 @@ import logging
 from pathlib import Path
 
 # Add project root directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+_project_root = Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+# Auto-discover and append virtual environment site-packages if running under unactivated shell interpreter
+_venv_search_paths = [
+    Path("/app/.venv"),
+    _project_root / ".venv",
+    Path(sys.prefix).parent / ".venv",
+]
+for _vp in _venv_search_paths:
+    if _vp.exists():
+        for _sp in _vp.glob("lib/python*/site-packages"):
+            _sp_str = str(_sp)
+            if _sp_str not in sys.path:
+                sys.path.insert(0, _sp_str)
 
 from sqlalchemy import inspect
 from app.config import get_settings

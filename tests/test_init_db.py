@@ -112,3 +112,13 @@ def test_mask_db_url_security():
     masked = mask_db_url(pg_url)
     assert "secretpassword123" not in masked
     assert "***MASKED***" in masked
+
+
+def test_sqlalchemy_and_postgres_driver_imports():
+    """Verify SQLAlchemy and psycopg (v3) dependencies import cleanly."""
+    import sqlalchemy
+    import psycopg
+
+    assert sqlalchemy.__version__ is not None
+    assert psycopg.__version__ is not None
+

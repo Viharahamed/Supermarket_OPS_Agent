@@ -1,0 +1,6 @@
+# nixpacks.toml
+# Production Nixpacks Build & Environment Configuration for Railway
+
+[variables]
+PATH = "/app/.venv/bin:$PATH"
+PYTHONPATH = "/app"

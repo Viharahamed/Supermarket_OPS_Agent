@@ -435,3 +435,32 @@ def test_secret_masking_formatter():
     assert "[REDACTED_TELEGRAM_TOKEN]" in formatted
     assert "sk-or-v1-1234567890123456789012345678901234567890" not in formatted
     assert "[REDACTED_OPENROUTER_KEY]" in formatted
+
+
+def test_scenario_draft_bill_unfinalized_regression(db_session: Session):
+    """8F: Multi-step billing regression test for 'Create a draft bill: 2kg sugar, 4 Maggi. Do not finalize.'
+
+    Ensures bill remains in DRAFT status with items attached and stock untouched.
+    """
+    principal = bootstrap_store_and_user(db=db_session)
+    sid = principal.store_id
+
+    p_sugar = inventory_service.create_product(db=db_session, store_id=sid, name="Sugar 1kg", sku="SUG-REG-1KG", unit="kg", cost_price=Decimal("38.00"), mrp=Decimal("45.00"), selling_price=Decimal("42.00"), stock_quantity=Decimal("100.00"))
+    p_maggi = inventory_service.create_product(db=db_session, store_id=sid, name="Maggi 70g", sku="MAG-REG-70G", unit="pack", cost_price=Decimal("10.00"), mrp=Decimal("14.00"), selling_price=Decimal("14.00"), stock_quantity=Decimal("100.00"))
+
+    bill = billing_service.create_draft_bill(db=db_session, store_id=sid)
+    items_payload = [
+        {"product_id": p_sugar.id, "quantity": Decimal("2.00")},
+        {"product_id": p_maggi.id, "quantity": Decimal("4.00")},
+    ]
+    updated_bill = billing_service.add_bill_items(db=db_session, bill_id=bill.id, items=items_payload, store_id=sid)
+
+    assert updated_bill.status == "DRAFT"
+    assert len(updated_bill.items) == 2
+
+    # Stock MUST NOT be decremented for draft bills
+    st_sugar = inventory_service.get_stock(db=db_session, product_id=p_sugar.id, store_id=sid)
+    st_maggi = inventory_service.get_stock(db=db_session, product_id=p_maggi.id, store_id=sid)
+    assert st_sugar.stock_quantity == Decimal("100.00")
+    assert st_maggi.stock_quantity == Decimal("100.00")
+

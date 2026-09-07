@@ -28,6 +28,50 @@ class AgentAction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_action_payload(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+
+        # Reject any payload containing observation/result echo fields
+        forbidden_echo_keys = {"data", "result", "observation", "success", "response", "status"}
+        present_echo_keys = forbidden_echo_keys.intersection(data.keys())
+        if present_echo_keys:
+            raise ValueError(
+                f"Payload contains observation/result echo fields {sorted(present_echo_keys)} and cannot be executed as an AgentAction."
+            )
+
+        # Safe normalization of legitimate alternative tool-call formats
+        if ("name" in data or "tool" in data) and "tool_name" not in data:
+            tool_name_val = data.get("name") or data.get("tool")
+
+            args_val = data.get("arguments")
+            if args_val is None:
+                if "parameters" in data:
+                    args_val = data.get("parameters")
+                elif "args" in data:
+                    args_val = data.get("args")
+
+            if (
+                isinstance(tool_name_val, str)
+                and tool_name_val.strip()
+                and isinstance(args_val, dict)
+                and "content" not in data
+            ):
+                data_copy = dict(data)
+                data_copy.pop("name", None)
+                data_copy.pop("tool", None)
+                data_copy.pop("parameters", None)
+                data_copy.pop("args", None)
+                data_copy["tool_name"] = tool_name_val
+                data_copy["arguments"] = args_val
+                if "action_type" not in data_copy:
+                    data_copy["action_type"] = "tool_call"
+                return data_copy
+
+        return data
+
     @field_validator("action_type")
     @classmethod
     def validate_action_type(cls, v: str) -> str:

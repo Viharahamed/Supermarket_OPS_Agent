@@ -203,7 +203,11 @@ async def test_text_message_handler_routing():
 
     context = MagicMock()
 
-    with patch("app.telegram.handlers.handle_message") as mock_handle:
+    from app.auth import AuthenticatedPrincipal
+    mock_principal = AuthenticatedPrincipal(user_id=1, store_id=1, role="OWNER", name="Owner", telegram_user_id=12345)
+
+    with patch("app.telegram.handlers.handle_message") as mock_handle, \
+         patch("app.auth.authenticate_telegram_user", return_value=mock_principal):
         mock_handle.return_value = AgentResponse(
             content="We have 120 packs of Maggi 70g in stock.",
             metadata={"iterations": 2},

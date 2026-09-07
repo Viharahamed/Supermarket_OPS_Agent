@@ -243,7 +243,11 @@ async def test_telegram_handler_delivers_document_attachment(tmp_path):
 
     context = MagicMock()
 
-    with patch("app.telegram.handlers.handle_message", return_value=mock_agent_response):
+    from app.auth import AuthenticatedPrincipal
+    mock_principal = AuthenticatedPrincipal(user_id=1, store_id=1, role="OWNER", name="Owner", telegram_user_id=12345)
+
+    with patch("app.telegram.handlers.handle_message", return_value=mock_agent_response), \
+         patch("app.auth.authenticate_telegram_user", return_value=mock_principal):
         await text_message_handler(update, context)
 
     # Assert reply_text sent message

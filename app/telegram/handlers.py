@@ -44,11 +44,35 @@ def escape_html_text(text: str) -> str:
     return html.escape(text)
 
 
+def balance_telegram_html_tags(text: str) -> str:
+    """Balance unclosed Telegram HTML tags (<b>, <i>, <code>, <pre>, <u>, <s>)."""
+    if not text:
+        return ""
+    allowed_tags = ["b", "i", "code", "pre", "u", "s"]
+    tag_stack: List[str] = []
+    pattern = re.compile(r"</?(" + "|".join(allowed_tags) + r")\b[^>]*>", re.IGNORECASE)
+    for match in pattern.finditer(text):
+        tag_str = match.group(0)
+        tag_name = match.group(1).lower()
+        if tag_str.startswith("</"):
+            if tag_name in tag_stack:
+                while tag_stack and tag_stack[-1] != tag_name:
+                    tag_stack.pop()
+                if tag_stack:
+                    tag_stack.pop()
+        else:
+            tag_stack.append(tag_name)
+    for tag_name in reversed(tag_stack):
+        text += f"</{tag_name}>"
+    return text
+
+
 def format_telegram_html(text: str) -> str:
     """Format agent output into Telegram-safe HTML.
     
     Converts markdown bold/italics/code syntax into HTML tags while preserving
     valid Telegram HTML tags (<b>, <i>, <code>, <pre>) and escaping unsafe HTML.
+    Auto-closes any unclosed Telegram HTML tags.
     """
     if not text:
         return ""
@@ -82,6 +106,9 @@ def format_telegram_html(text: str) -> str:
     # Restore protected Telegram HTML tags
     for key, tag_str in tokens.items():
         escaped = escaped.replace(html.escape(key), tag_str)
+
+    # Auto-close any unclosed allowed HTML tags
+    escaped = balance_telegram_html_tags(escaped)
 
     return escaped
 
@@ -262,8 +289,9 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text(chunk, parse_mode=ParseMode.HTML)
             except Exception as parse_err:
                 logger.warning(f"Telegram HTML parse error: {parse_err}. Falling back to plain text reply.")
-                # Fallback to plain text if HTML parsing failed for chunk
-                plain_chunks = split_message(raw_content)
+                # Fallback to plain text if HTML parsing failed for chunk (strip literal HTML tags)
+                stripped_raw = re.sub(r"<[^>]+>", "", raw_content)
+                plain_chunks = split_message(stripped_raw)
                 for plain_chunk in plain_chunks:
                     await update.message.reply_text(plain_chunk)
 

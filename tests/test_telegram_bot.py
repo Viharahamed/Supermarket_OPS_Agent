@@ -290,3 +290,53 @@ def test_build_application_missing_token_rejection():
             with pytest.raises(ValueError) as exc_info:
                 build_application()
             assert "TELEGRAM_BOT_TOKEN is missing" in str(exc_info.value)
+
+
+def test_format_telegram_html_balances_unclosed_tags():
+    """Verify format_telegram_html auto-closes unclosed allowed Telegram HTML tags."""
+    unclosed = "<b>Draft bill #8 (BILL-20260907-79BC31) created: <i>Sugar 2kg"
+    formatted = format_telegram_html(unclosed)
+    assert formatted == "<b>Draft bill #8 (BILL-20260907-79BC31) created: <i>Sugar 2kg</i></b>"
+
+
+@pytest.mark.asyncio
+async def test_text_message_handler_html_fallback_strips_literal_tags():
+    """Verify that when Telegram HTML reply raises a parse error, plain text fallback strips literal HTML tags."""
+    update = MagicMock()
+    update.message.text = "Create draft bill"
+    update.effective_user.id = 99991
+    update.effective_chat.id = 88881
+    
+    # First call with parse_mode='HTML' fails, second call without parse_mode succeeds
+    call_count = 0
+    async def mock_reply(text, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if "parse_mode" in kwargs and kwargs["parse_mode"] == "HTML":
+            raise Exception("Can't parse entities: unclosed tag")
+        return None
+
+    update.message.reply_text = AsyncMock(side_effect=mock_reply)
+
+    context = MagicMock()
+
+    from app.auth import AuthenticatedPrincipal
+    mock_principal = AuthenticatedPrincipal(user_id=1, store_id=1, role="OWNER", name="Owner", telegram_user_id=99991)
+
+    with patch("app.telegram.handlers.handle_message") as mock_handle, \
+         patch("app.auth.authenticate_telegram_user", return_value=mock_principal):
+        mock_handle.return_value = AgentResponse(
+            content="<b>Draft bill #8</b> created successfully.",
+            metadata={"iterations": 1},
+        )
+
+        await text_message_handler(update, context)
+
+        # Ensure fallback occurred and sent text without literal <b> tags
+        assert call_count >= 2
+        last_call_args = update.message.reply_text.call_args_list[-1]
+        sent_text = last_call_args[0][0]
+        assert "<b>" not in sent_text
+        assert "</b>" not in sent_text
+        assert "Draft bill #8 created successfully." in sent_text
+

@@ -317,4 +317,98 @@ def test_agent_orchestration_multi_step_draft_billing_dynamic_bill_id(db_session
     assert st_maggi.stock_quantity == Decimal("100.00")
 
 
+def test_agent_grounded_product_resolution_and_draft_creation(db_session):
+    """Regression test: '2kg sugar, 4 Maggi' grounding & draft creation.
+
+    Verifies:
+    1. Search tools are executed to resolve 'sugar' and 'Maggi' to actual product IDs.
+    2. Draft bill contains ONLY those resolved products with exact quantities.
+    3. Draft status remains 'DRAFT'.
+    4. Inventory stock is NOT deducted for draft bills.
+    """
+    from decimal import Decimal
+    from app.auth import ToolExecutionContext, bootstrap_store_and_user
+    from app.services import inventory_service
+    from app.db.models import Bill
+
+    principal = bootstrap_store_and_user(store_name="Grounded Resolution Store", telegram_user_id=88801, db=db_session)
+    ctx = ToolExecutionContext(principal=principal, db=db_session)
+    sid = principal.store_id
+
+    # Create distinct products
+    p_sugar = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Sugar 1kg", sku="SUG-GRND-1KG",
+        unit="kg", cost_price=Decimal("38.00"), mrp=Decimal("45.00"), selling_price=Decimal("42.00"), stock_quantity=Decimal("50.00")
+    )
+    p_maggi = inventory_service.create_product(
+        db=db_session, store_id=sid, name="Maggi 2-Min Noodle", sku="MAG-GRND-70G",
+        unit="pack", cost_price=Decimal("10.00"), mrp=Decimal("14.00"), selling_price=Decimal("14.00"), stock_quantity=Decimal("60.00")
+    )
+
+    created_bill_id = None
+
+    def mock_grounded_llm(system_prompt, messages):
+        nonlocal created_bill_id
+        msg_count = len(messages)
+        if msg_count == 1:
+            # Iteration 1: Search sugar
+            return AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "sugar"})
+        elif msg_count == 3:
+            # Iteration 2: Search Maggi
+            return AgentAction(action_type="tool_call", tool_name="search_products", arguments={"query": "Maggi"})
+        elif msg_count == 5:
+            # Iteration 3: Create draft bill
+            return AgentAction(action_type="tool_call", tool_name="create_draft_bill", arguments={})
+        elif msg_count == 7:
+            # Iteration 4: Add bill items using verified IDs from search results
+            bill_rec = db_session.query(Bill).filter(Bill.store_id == sid).first()
+            assert bill_rec is not None
+            created_bill_id = bill_rec.id
+            return AgentAction(
+                action_type="tool_call",
+                tool_name="add_bill_items",
+                arguments={
+                    "bill_id": created_bill_id,
+                    "items": [
+                        {"product_id": p_sugar.id, "quantity": 2},
+                        {"product_id": p_maggi.id, "quantity": 4},
+                    ],
+                },
+            )
+        else:
+            # Iteration 5: Final response
+            return AgentAction(
+                action_type="final_response",
+                content=f"Draft bill #{created_bill_id} created with 2kg Sugar and 4 Maggi. Status: DRAFT.",
+            )
+
+    mock_llm = MagicMock()
+    mock_llm.generate_action.side_effect = mock_grounded_llm
+
+    agent = Agent(llm_client=mock_llm, max_iterations=8)
+    response = agent.run("Create a draft bill: 2kg sugar, 4 Maggi. Do not finalize.", context=ctx)
+
+    assert response.metadata["action_type"] == "final_response"
+    assert response.metadata["iterations"] == 5
+
+    # Verify draft bill in DB
+    bills = db_session.query(Bill).filter(Bill.store_id == sid).all()
+    assert len(bills) == 1
+    bill = bills[0]
+    assert bill.id == created_bill_id
+    assert bill.status == "DRAFT"
+    assert len(bill.items) == 2
+
+    items_by_pid = {item.product_id: item.quantity for item in bill.items}
+    assert items_by_pid[p_sugar.id] == Decimal("2.00")
+    assert items_by_pid[p_maggi.id] == Decimal("4.00")
+
+    # Verify stock is completely unchanged for draft bill
+    st_sugar = inventory_service.get_stock(db=db_session, product_id=p_sugar.id, store_id=sid)
+    st_maggi = inventory_service.get_stock(db=db_session, product_id=p_maggi.id, store_id=sid)
+    assert st_sugar.stock_quantity == Decimal("50.00")
+    assert st_maggi.stock_quantity == Decimal("60.00")
+
+
+
 
